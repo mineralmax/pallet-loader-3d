@@ -183,7 +183,7 @@ body {
       <div class="srow"><span class="sn">Pallets</span><span class="sv2" id="sp">1</span></div>
       <div class="srow"><span class="sn">Dropped</span><span class="sv2 g" id="sd">0</span></div>
       <div class="srow"><span class="sn">Crushed</span><span class="sv2 g" id="sc">0</span></div>
-      <div class="srow"><span class="sn">Remaining</span><span class="sv2" id="sr">180</span></div>
+      <div class="srow"><span class="sn">Remaining</span><span class="sv2" id="sr">100</span></div>
       <div class="srow"><span class="sn">Height</span><span class="sv2" id="sh">0.0 / 10 ft</span></div>
       <div class="srow"><span class="sn">Short</span><span class="sv2 g" id="ssh">0</span></div>
       <div class="srow"><span class="sn">Packed</span><span class="sv2" id="spk">—</span></div>
@@ -219,7 +219,7 @@ body {
         <kbd>←→↑↓</kbd> nudge<br>
         <kbd>Q</kbd><kbd>E</kbd> / drag to orbit<br>
         Scroll to zoom<br><br>
-        Cartons arrive as full<br>layers — fit them like a<br>puzzle. Some <b>squish</b> under<br>load and get a little crushed<br>past MAX LOAD. Rigid ones<br>never do. Build every pallet<br>over <b>10 ft</b> before shipping.<br><kbd>U</kbd> takes back one box.<br><kbd>G</kbd> shows where it fits.
+        Cartons arrive as full<br>layers — fit them like a<br>puzzle. Some <b>squish</b> under<br>load and get a little crushed<br>past MAX LOAD. Rigid ones<br>never do. Build every pallet<br>over <b>10 ft</b> before shipping.<br><kbd>U</kbd> takes back one box.<br><kbd>G</kbd> shows where it fits.<br>Boxes snap flush; hold <kbd>Shift</kbd><br>to place freely.
       </div>
     </div>
   </div>
@@ -234,10 +234,12 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const R = (a, b) => a + Math.random() * (b - a);
 
 // ── Constants (1 unit = 1 metre) ───────────────────────────────────────────
-const PW = 1.2, PD = 1.0;          // pallet footprint (x, z)
+const U = 0.1016;                  // modular carton unit = 4 in
+const PW = 12 * U, PD = 10 * U;    // standard 48 × 40 in pallet (x, z)
+const lb = kg => Math.round(kg * 2.2046), inch = m => Math.round(m * 39.37);
 const PAL_TOP = 0.15;              // deck surface height
 const MAX_H = 5.2;                 // load height limit above the deck
-const TOTAL = 180;                // about three pallets' worth
+const TOTAL = 100;                // about three pallets' worth of big cartons
 const PH = { lin: 0.2, ang: 0.7 };                // body damping (tunable)
 const W = { top: 20, corner: 0.5, dead: 6, touch: 4, flush: 6, exposed: 12, void: 5, heavy: 3 };   // computer player's scoring weights
 const TARGET_H = 3.048;           // every shipped pallet should stand at least 10 ft
@@ -363,9 +365,9 @@ function labelTex(spec) {
   g.fillStyle = '#f3efe4'; g.fillRect(0, 0, 256, 128);
   g.strokeStyle = t.css; g.lineWidth = 8; g.strokeRect(4, 4, 248, 120);
   g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillStyle = '#1c1a15'; g.font = 'bold 54px "IBM Plex Mono", monospace'; g.fillText(spec.kg + ' kg', 128, 42);
+  g.fillStyle = '#1c1a15'; g.font = 'bold 54px "IBM Plex Mono", monospace'; g.fillText(lb(spec.kg) + ' lb', 128, 42);
   g.fillStyle = t.css; g.font = 'bold 24px "IBM Plex Mono", monospace'; g.fillText(t.name, 128, 85);
-  g.fillStyle = '#555'; g.font = '19px "IBM Plex Mono", monospace'; g.fillText(spec.rigid ? 'RIGID · NO CRUSH' : 'MAX LOAD ' + spec.strength + ' kg', 128, 110);
+  g.fillStyle = '#555'; g.font = '19px "IBM Plex Mono", monospace'; g.fillText(spec.rigid ? 'RIGID · NO CRUSH' : 'MAX LOAD ' + lb(spec.strength) + ' lb', 128, 110);
   const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
   const mat = new THREE.MeshBasicMaterial({ map: tex, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   labelCache.set(key, mat); return mat;
@@ -379,19 +381,19 @@ const tapeMats = TIERS.map(t => new THREE.MeshStandardMaterial({ color: t.tape, 
 let layerNo = 0;
 function genLayer() {
   const pick = arr => arr[Math.floor(Math.random() * arr.length)];
-  const h = pick([2, 3, 3, 4]) / 10, pieces = [], flip = layerNo++ % 2 === 1;   // every other layer is turned 180° so seams don't line up
+  const h = pick([3, 4, 4, 5]) * U, pieces = [], flip = layerNo++ % 2 === 1;   // every other layer is turned 180° so seams don't line up
   (function split(x0, z0, w, d, depth) {                            // guillotine cuts, sizes in 10 cm units
-    const mustSplit = depth === 0 || w > 7 || d > 6;
-    const canW = w >= 6, canD = d >= 6;
+    const mustSplit = depth === 0 || w > 8 || d > 6;
+    const canW = w >= 8, canD = d >= 8;               // no carton smaller than 16 in
     if (!canW && !canD || (!mustSplit && Math.random() < 0.35)) { pieces.push({ x0, z0, w, d }); return; }
-    if (canW && (!canD || w / 12 >= d / 10 || Math.random() < 0.3)) { const a = 3 + Math.floor(Math.random() * (w - 5)); split(x0, z0, a, d, depth + 1); split(x0 + a, z0, w - a, d, depth + 1); }
-    else { const a = 3 + Math.floor(Math.random() * (d - 5)); split(x0, z0, w, a, depth + 1); split(x0, z0 + a, w, d - a, depth + 1); }
+    if (canW && (!canD || w / 12 >= d / 10 || Math.random() < 0.3)) { const a = 4 + Math.floor(Math.random() * (w - 7)); split(x0, z0, a, d, depth + 1); split(x0 + a, z0, w - a, d, depth + 1); }
+    else { const a = 4 + Math.floor(Math.random() * (d - 7)); split(x0, z0, w, a, depth + 1); split(x0, z0 + a, w, d - a, depth + 1); }
   })(0, 0, 12, 10, 0);
   for (let i = pieces.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); [pieces[i], pieces[k]] = [pieces[k], pieces[i]]; }
   return pieces.map((q, i) => {
     const x0 = flip ? 12 - q.x0 - q.w : q.x0, z0 = flip ? 10 - q.z0 - q.d : q.z0;
-    const spec = makeSpec([q.w / 10, h, q.d / 10]);
-    spec.slot = { x: (x0 + q.w / 2) / 10 - PW / 2, z: (z0 + q.d / 2) / 10 - PD / 2 }; spec.first = i === 0;
+    const spec = makeSpec([q.w * U, h, q.d * U]);
+    spec.slot = { x: (x0 + q.w / 2) * U - PW / 2, z: (z0 + q.d / 2) * U - PD / 2 }; spec.first = i === 0;
     return spec;
   });
 }
@@ -688,7 +690,7 @@ function updateUI() {
   if (cur) {
     const t = TIERS[cur.tier], d = dimsFor(cur, curOri.vert, curOri.sw);
     hand.innerHTML = `<span class="tag" style="background:${t.css};color:#fff">${t.name}</span><br>
-      <b>${cur.kg} kg</b> · ${cur.rigid ? '<b>rigid</b>, won\'t crush' : 'max load <b>' + cur.strength + ' kg</b>'}<br>${d.fw.toFixed(2)} × ${d.fd.toFixed(2)} × ${d.fh.toFixed(2)} m${curOri.yaw ? '<br>angle <b>' + Math.round(((curOri.yaw * 180 / Math.PI) % 180 + 180) % 180) + '°</b>' : ''}`;
+      <b>${lb(cur.kg)} lb</b> · ${cur.rigid ? '<b>rigid</b>, won\'t crush' : 'max load <b>' + lb(cur.strength) + ' lb</b>'}<br>${inch(d.fw)} × ${inch(d.fd)} × ${inch(d.fh)} in${curOri.yaw ? '<br>angle <b>' + Math.round(((curOri.yaw * 180 / Math.PI) % 180 + 180) % 180) + '°</b>' : ''}`;
   } else hand.textContent = 'All placed — ship it';
 
   const qe = $('qp'); qe.innerHTML = '';
@@ -697,8 +699,8 @@ function updateUI() {
     const c = BOX_PALETTE[b.colorIdx], d = document.createElement('div');
     d.className = 'qb';
     const mx = Math.max(...b.dims);
-    d.style.cssText = `width:${Math.round(60 + (mx - .3) / .45 * 78)}px;height:${Math.round(12 + b.dims[1] * 18)}px;background:#${c.fill.toString(16).padStart(6, '0')}`;
-    d.innerHTML = `<span>${b.kg}kg</span><span>${b.rigid ? '■' : b.tier === 0 ? '⚠' : ''}</span>`;
+    d.style.cssText = `width:${Math.round(60 + (mx - .4) / .45 * 78)}px;height:${Math.round(12 + b.dims[1] * 18)}px;background:#${c.fill.toString(16).padStart(6, '0')}`;
+    d.innerHTML = `<span>${lb(b.kg)}lb</span><span>${b.rigid ? '■' : b.tier === 0 ? '⚠' : ''}</span>`;
     qe.appendChild(d);
   }
 }
@@ -789,7 +791,7 @@ $('spd').addEventListener('click', e => {
 });
 
 // ── Computer player ────────────────────────────────────────────────────────
-const RES = 0.05, NX = Math.round(PW / RES), NZ = Math.round(PD / RES);
+const RES = U / 2, NX = Math.round(PW / RES), NZ = Math.round(PD / RES);
 function heightmap() {
   const h = new Float32Array(NX * NZ).fill(PAL_TOP), own = new Array(NX * NZ).fill(null);
   for (const n of nodes) {
@@ -887,7 +889,7 @@ function planPlacement(spec, minRatio = 0.75, allowTippy = false, comTol = 0.25,
           let cnt = 0, ix2 = bx + sx, iz2 = bz + sz;
           while (ix2 >= 0 && ix2 < NX && iz2 >= 0 && iz2 < NZ && h[ix2 * NZ + iz2] < L - 0.02) { cnt++; ix2 += sx; iz2 += sz; }
           const gap = cnt * RES;
-          if (gap > 0.02 && gap < 0.29) deadGaps++;
+          if (gap > 0.02 && gap < 0.39) deadGaps++;
         }
         let void_ = 0;                                              // empty space left under the box
         for (let ix = ix0; ix <= ix1; ix++) for (let iz = iz0; iz <= iz1; iz++) void_ += L - h[ix * NZ + iz];
@@ -964,6 +966,19 @@ function refreshGhost() {
   ghost.fits = top + fh - PAL_TOP <= MAX_H + 1e-6;
   ghost.top = top;
 }
+// magnetic snapping: pull the box flush against pallet edges and neighbouring cartons (hold Shift to turn off)
+function snapGhost() {
+  const [efw, efd] = footprint(ghost.fw, ghost.fd, curOri.yaw), top = ghost.top, T = 0.09;
+  const cx = [-PW / 2 + efw / 2, PW / 2 - efw / 2], cz = [-PD / 2 + efd / 2, PD / 2 - efd / 2];
+  for (const n of nodes) {
+    const b = n.bb;
+    if (!(b.maxY > top + 0.02 || Math.abs(b.maxY - top) < 0.03)) continue;          // a neighbour at or above this level
+    if (b.maxZ > ghost.z - efd / 2 && b.minZ < ghost.z + efd / 2) cx.push(b.maxX + efw / 2, b.minX - efw / 2, b.minX + efw / 2, b.maxX - efw / 2);
+    if (b.maxX > ghost.x - efw / 2 && b.minX < ghost.x + efw / 2) cz.push(b.maxZ + efd / 2, b.minZ - efd / 2, b.minZ + efd / 2, b.maxZ - efd / 2);
+  }
+  const near = (v, c) => { let best = v, bd = T; for (const k of c) { const d = Math.abs(k - v); if (d < bd) { bd = d; best = k; } } return best; };
+  ghost.x = near(ghost.x, cx); refreshGhost(); ghost.z = near(ghost.z, cz); refreshGhost();
+}
 function updateGhost() {
   guideMesh.visible = false;
   if (!cur || shipping || over) { ghostMesh.visible = footMesh.visible = false; return; }
@@ -978,6 +993,7 @@ function updateGhost() {
       if (ray.ray.intersectPlane(plane, hit)) { ghost.x = hit.x + nudge.x; ghost.z = hit.z + nudge.z; }
       refreshGhost();
     }
+    if (!held.has('shift') && Math.abs(Math.sin(2 * curOri.yaw)) < 0.01) snapGhost();
   } else refreshGhost();
   const ok = ghost.fits;
   ghostMat.color.set(ok ? 0xf0b42a : 0xd44c3a); ghostMat.emissive.set(ok ? 0xf0b42a : 0xd44c3a);
