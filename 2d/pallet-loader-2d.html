@@ -1,0 +1,679 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Pallet Loader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap">
+
+<style>
+/* layout: game canvas + side panel, stack on mobile */
+:root {
+  --bg: #0f0e0c;
+  --surf: #1b1916;
+  --surf2: #242019;
+  --bord: #352e26;
+  --fg: #dedad1;
+  --muted: #7a7265;
+  --dim: #46403a;
+  --y: #f0b42a;
+  --yd: #7c5e14;
+  --grn: #52c47a;
+  --red: #d44c3a;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #eeebe2;
+    --surf: #e4e0d7;
+    --surf2: #d9d5cc;
+    --bord: #b6b0a7;
+    --fg: #1c1a15;
+    --muted: #5c5850;
+    --dim: #c0bbb3;
+    --y: #b87400;
+    --yd: #edd898;
+    --grn: #1a8850;
+    --red: #c03028;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #eeebe2;
+  --surf: #e4e0d7;
+  --surf2: #d9d5cc;
+  --bord: #b6b0a7;
+  --fg: #1c1a15;
+  --muted: #5c5850;
+  --dim: #c0bbb3;
+  --y: #b87400;
+  --yd: #edd898;
+  --grn: #1a8850;
+  --red: #c03028;
+  color-scheme: light;
+}
+
+*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'IBM Plex Mono', 'Courier New', monospace;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-block: 14px;
+  gap: 12px;
+}
+
+.hdr {
+  font-size: 9px;
+  letter-spacing: 5px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.wrap {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  width: 100%;
+  max-width: 700px;
+  padding: 0 16px;
+}
+
+.cvs-wrap { position: relative; flex: 1 1 auto; min-width: 0; }
+
+#c {
+  display: block;
+  max-width: 100%;
+  cursor: crosshair;
+  border: 1px solid var(--bord);
+}
+
+.over {
+  position: absolute;
+  inset: 0;
+  background: rgba(10,9,7,0.91);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px;
+}
+.over[hidden] { display: none !important; }
+
+.over-ttl {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  color: var(--y);
+  text-transform: uppercase;
+}
+
+.score-tbl {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 5px 28px;
+  font-size: 13px;
+}
+.sl { color: var(--muted); }
+.sv { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.rating { font-size: 14px; letter-spacing: 3px; color: var(--y); }
+
+.btn-play {
+  background: var(--y);
+  color: #0c0b09;
+  border: none;
+  padding: 11px 32px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.btn-play:hover { opacity: 0.86; }
+
+.panel {
+  width: 162px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pblk {
+  background: var(--surf);
+  border: 1px solid var(--bord);
+  padding: 11px 12px;
+}
+
+.plbl {
+  font-size: 8px;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.srow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--bord);
+  font-size: 12px;
+}
+.srow:last-child { border-bottom: none; }
+.sn { color: var(--muted); font-size: 10px; }
+.sv2 { font-weight: 700; font-variant-numeric: tabular-nums; }
+.sv2.w { color: var(--red); }
+.sv2.g { color: var(--grn); }
+
+.btn-ship {
+  width: 100%;
+  padding: 12px 10px;
+  background: var(--surf2);
+  border: 1px solid var(--y);
+  color: var(--y);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 0.1s, color 0.1s;
+}
+.btn-ship:hover { background: var(--y); color: #0c0b09; }
+.btn-ship:disabled { border-color: var(--bord); color: var(--dim); background: var(--surf); cursor: not-allowed; }
+
+.qprev { display: flex; flex-direction: column; gap: 3px; min-height: 50px; }
+.qb { border-radius: 1px; position: relative; overflow: hidden; }
+.qb::after { content: ''; position: absolute; inset: 0; background: linear-gradient(150deg, rgba(255,255,255,0.15) 0%, transparent 55%); }
+
+.inst { font-size: 10px; line-height: 1.85; color: var(--muted); }
+.inst kbd { background: var(--surf2); border: 1px solid var(--bord); padding: 0 4px; font-family: inherit; font-size: 9px; }
+
+@media (max-width: 540px) {
+  .wrap { flex-direction: column; align-items: center; padding: 0 12px; }
+  .panel { width: 100%; max-width: 500px; flex-direction: row; flex-wrap: wrap; }
+  .panel > * { flex: 1 1 140px; min-width: 0; }
+  .btn-ship { flex: 1 1 100%; }
+  .inst { display: none; }
+}
+</style>
+
+<p class="hdr">Pallet Loader</p>
+
+<div class="wrap">
+  <div class="cvs-wrap">
+    <canvas id="c" width="500" height="600"></canvas>
+    <div class="over" id="over" hidden>
+      <div class="over-ttl">Truck Cleared</div>
+      <div class="score-tbl" id="ftbl"></div>
+      <div class="rating" id="frate"></div>
+      <button class="btn-play" onclick="startGame()">Play Again</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="pblk">
+      <div class="plbl">Status</div>
+      <div class="srow"><span class="sn">Pallets</span><span class="sv2" id="sp">1</span></div>
+      <div class="srow"><span class="sn">Dropped</span><span class="sv2 g" id="sd">0</span></div>
+      <div class="srow"><span class="sn">Remaining</span><span class="sv2" id="sr">28</span></div>
+    </div>
+
+    <button class="btn-ship" id="bship">Ship Pallet →</button>
+
+    <div class="pblk">
+      <div class="plbl">Up Next</div>
+      <div class="qprev" id="qp"></div>
+    </div>
+
+    <div class="pblk">
+      <div class="inst">
+        Move mouse to position<br>
+        <kbd>Click</kbd> to place<br>
+        <kbd>R</kbd> to rotate box<br>
+        <kbd>←→↑↓</kbd> to nudge<br>
+        <kbd>Space</kbd> to place<br><br>
+        Stagger for stability.<br>
+        Fewer pallets = better.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+<script>
+'use strict';
+const { Engine, Bodies, Body, Composite } = Matter;
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = canvas.width;   // 500
+const H = canvas.height;  // 600
+
+const PAL_X   = W / 2;
+const PAL_Y   = H - 52;         // 548
+const PAL_W   = 360;
+const PAL_H   = 20;
+const PAL_TOP = PAL_Y - PAL_H / 2; // 538
+const DROP_Y  = 68;
+const XMIN    = 62;
+const XMAX    = W - 62;          // 438
+const TOTAL   = 28;
+const prefRed = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const BOX_PALETTE = [
+  { fill: '#5a98e0', rim: '#2a5a9a' },
+  { fill: '#70c244', rim: '#3a7c1c' },
+  { fill: '#e87238', rim: '#9c3c14' },
+  { fill: '#d84c78', rim: '#94203e' },
+  { fill: '#a460d8', rim: '#5a2894' },
+  { fill: '#e8c030', rim: '#9a7808' },
+];
+
+let eng, world, palBody, gndBody;
+let queue = [], cur = null;
+let phys = [];          // { body, spec }[]
+let fallen = new Set();
+let mouseX = W / 2, mouseY = PAL_Y - 200, nudgeX = 0, nudgeY = 0;
+let canDrop = true, settleT = 0;
+let palCnt = 1, dropCnt = 0, remaining = 0;
+let over = false;
+let curRotated = false;
+
+// ── Box generation ─────────────────────────────────────────────────────────
+
+function genBox() {
+  const r = Math.random();
+  let w, h;
+  if      (r < 0.20) { w = 110 + Math.random() * 70; h = 30 + Math.random() * 26; }
+  else if (r < 0.40) { w = 65  + Math.random() * 60; h = 32 + Math.random() * 34; }
+  else               { w = 70  + Math.random() * 80; h = 40 + Math.random() * 54; }
+
+  // Start with widest face down
+  if (h > w) { [w, h] = [h, w]; }
+
+  const density = 0.0018 + Math.random() * 0.0008;
+  const colorIdx = Math.floor(Math.random() * BOX_PALETTE.length);
+  return { w: Math.round(w), h: Math.round(h), density, colorIdx, id: Math.random() };
+}
+
+function boxCol(spec) {
+  return BOX_PALETTE[spec.colorIdx];
+}
+
+function dims(spec) {
+  return curRotated ? { w: spec.h, h: spec.w } : { w: spec.w, h: spec.h };
+}
+
+function getStackTop(bx, bw) {
+  let top = PAL_TOP;
+  const x0 = bx - bw / 2, x1 = bx + bw / 2;
+  for (const { body } of phys) {
+    if (fallen.has(body.id)) continue;
+    const b = body.bounds;
+    if (b.max.x > x0 && b.min.x < x1) top = Math.min(top, b.min.y);
+  }
+  return top;
+}
+
+// ── UI ─────────────────────────────────────────────────────────────────────
+
+function updateUI() {
+  document.getElementById('sp').textContent = palCnt;
+  const de = document.getElementById('sd');
+  de.textContent = dropCnt;
+  de.className = 'sv2 ' + (dropCnt > 0 ? 'w' : 'g');
+  document.getElementById('sr').textContent = remaining + (cur ? 1 : 0);
+  document.getElementById('bship').disabled = over;
+
+  const qe = document.getElementById('qp');
+  qe.innerHTML = '';
+  if (!cur && !queue.length) {
+    qe.innerHTML = '<span style="font-size:10px;color:var(--muted)">All placed</span>';
+    return;
+  }
+  for (const b of queue.slice(0, 12)) {
+    const c = boxCol(b);
+    const d = document.createElement('div');
+    d.className = 'qb';
+    const sc = 138 / Math.max(b.w, 65);
+    d.style.cssText = `width:${Math.min(138, Math.round(b.w * sc))}px;height:${Math.max(8, Math.round(b.h * sc * 0.4))}px;background:${c.fill}`;
+    qe.appendChild(d);
+  }
+}
+
+// ── Game logic ─────────────────────────────────────────────────────────────
+
+function startGame() {
+  if (eng) { Composite.clear(world, false); Engine.clear(eng); }
+  eng = Engine.create({ gravity: { y: 1.2 }, velocityIterations: 10, positionIterations: 8 });
+  world = eng.world;
+
+  palBody = Bodies.rectangle(PAL_X, PAL_Y, PAL_W, PAL_H,
+    { isStatic: true, friction: 2.0, frictionStatic: 8.0, restitution: 0.0, label: 'pal' });
+  gndBody = Bodies.rectangle(W / 2, H + 65, W * 5, 50,
+    { isStatic: true, label: 'gnd' });
+  Composite.add(world, [palBody, gndBody]);
+
+  queue     = Array.from({ length: TOTAL }, genBox);
+  cur       = queue.shift();
+  remaining = queue.length;
+  phys      = [];
+  fallen    = new Set();
+  palCnt    = 1;
+  dropCnt   = 0;
+  canDrop   = true;
+  settleT   = 0;
+  mouseX    = W / 2;
+  mouseY    = PAL_Y - 180;
+  nudgeX    = 0;
+  nudgeY    = 0;
+  over       = false;
+  curRotated = false;
+
+  document.getElementById('over').hidden = true;
+  updateUI();
+}
+
+function getPlacePos() {
+  if (!cur) return { bx: W / 2, by: PAL_TOP - 20 };
+  const d = dims(cur);
+  const bx = Math.max(XMIN, Math.min(XMAX, mouseX + nudgeX));
+  const stackTop = getStackTop(bx, d.w);
+  const maxBy = stackTop - d.h / 2 - 1;
+  const by = Math.max(40, Math.min(maxBy, mouseY + nudgeY));
+  return { bx, by };
+}
+
+function drop() {
+  if (!canDrop || !cur || over) return;
+
+  const { bx, by } = getPlacePos();
+  const spec = cur;
+  const d = dims(spec);
+  const body = Bodies.rectangle(bx, by, d.w, d.h, {
+    density: spec.density, friction: 1.5, frictionStatic: 3.0, frictionAir: 0.04,
+    restitution: 0.0, chamfer: { radius: 2 }, label: 'box',
+  });
+  Body.setVelocity(body, { x: 0, y: 0.2 });
+  body._spec = spec;
+  body._w    = d.w;
+  body._h    = d.h;
+
+  Composite.add(world, body);
+  phys.push({ body, spec });
+
+  curRotated = false;
+  cur        = queue.length ? queue.shift() : null;
+  remaining  = queue.length;
+  canDrop    = false;
+  settleT    = 16;
+  nudgeX     = 0;
+  nudgeY     = 0;
+  updateUI();
+}
+
+function shipPallet() {
+  if (over) return;
+  for (const { body } of phys) Composite.remove(world, body);
+  phys   = [];
+  fallen = new Set();
+  if (!cur && !queue.length) { endGame(); return; }
+  palCnt++;
+  canDrop = true;
+  settleT = 0;
+  updateUI();
+}
+
+function endGame() {
+  over = true;
+  document.getElementById('over').hidden = false;
+  document.getElementById('ftbl').innerHTML =
+    `<span class="sl">Pallets used</span><span class="sv">${palCnt}</span>
+     <span class="sl">Boxes dropped</span><span class="sv">${dropCnt}</span>`;
+  document.getElementById('frate').textContent =
+    dropCnt === 0 && palCnt <= 2 ? '★★★  FLAWLESS'
+    : dropCnt === 0              ? '★★  CLEAN LOAD'
+    : dropCnt <= 2               ? '★  GOOD EFFORT'
+    :                              'KEEP PRACTICING';
+}
+
+// ── Rendering ───────────────────────────────────────────────────────────────
+
+function isDark() {
+  const t = document.documentElement.getAttribute('data-theme');
+  if (t === 'dark')  return true;
+  if (t === 'light') return false;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+function drawBg(dk) {
+  ctx.fillStyle = dk ? '#0f0e0c' : '#e8e4da';
+  ctx.fillRect(0, 0, W, H);
+
+  // Ceiling ambient
+  if (dk) {
+    const g = ctx.createLinearGradient(0, 0, 0, 160);
+    g.addColorStop(0, 'rgba(240,176,50,0.035)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, 160);
+  }
+
+  // Floor strip
+  const fy = H - 46;
+  ctx.fillStyle = dk ? '#161410' : '#dad5ca';
+  ctx.fillRect(0, fy, W, H - fy);
+  ctx.strokeStyle = dk ? 'rgba(200,158,68,0.13)' : 'rgba(100,80,40,0.15)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, fy); ctx.lineTo(W, fy); ctx.stroke();
+
+}
+
+function drawPallet(dk) {
+  const [px, py, pw, ph] = [PAL_X, PAL_Y, PAL_W, PAL_H];
+  const wd = dk ? '#2c1e14' : '#7a5840';
+  const wm = dk ? '#3e2c1e' : '#8a6450';
+  const wl = dk ? '#553c2a' : '#9a7462';
+
+  // Feet
+  ctx.fillStyle = wd;
+  for (const fx of [px - pw/2 + 35, px, px + pw/2 - 35])
+    ctx.fillRect(fx - 22, py + ph/2, 44, 10);
+
+  // Main beam
+  ctx.fillStyle = wm;
+  ctx.fillRect(px - pw/2, py - ph/2, pw, ph);
+
+  // Plank highlights
+  ctx.fillStyle = wl;
+  for (let i = 0; i < 5; i++) {
+    const x = px - pw/2 + i * (pw / 4.2) + 4;
+    ctx.fillRect(x, py - ph/2, pw / 9, ph * 0.55);
+  }
+
+  // Top highlight
+  ctx.fillStyle = dk ? 'rgba(255,210,148,0.11)' : 'rgba(255,255,255,0.22)';
+  ctx.fillRect(px - pw/2, py - ph/2, pw, 2);
+}
+
+function drawPhysBox(body, spec, dk) {
+  const { x, y } = body.position;
+  if (y > H + 220 || Math.abs(x - W/2) > W + 220) return;
+
+  const a = body.angle;
+  const c = boxCol(spec);
+  const w = body._w !== undefined ? body._w : spec.w;
+  const h = body._h !== undefined ? body._h : spec.h;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(a);
+
+  ctx.shadowColor    = dk ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.18)';
+  ctx.shadowBlur     = 9;
+  ctx.shadowOffsetX  = 2;
+  ctx.shadowOffsetY  = 3;
+  ctx.fillStyle = c.fill;
+  ctx.fillRect(-w/2, -h/2, w, h);
+  ctx.shadowColor = 'transparent';
+
+  ctx.fillStyle = c.rim;
+  ctx.fillRect(-w/2, -h/2, w, 3);
+  ctx.fillRect(-w/2,  h/2-3, w, 3);
+  ctx.fillRect(-w/2, -h/2, 3, h);
+  ctx.fillRect( w/2-3, -h/2, 3, h);
+
+  // Center crease
+  ctx.globalAlpha = 0.32;
+  ctx.strokeStyle = c.rim;
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, -h/2); ctx.lineTo(0, h/2); ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  ctx.restore();
+}
+
+function drawGhost(dk) {
+  if (!cur) return;
+
+  const { bx, by } = getPlacePos();
+  const spec = cur;
+  const d    = dims(spec);
+  const c    = boxCol(spec);
+  const w    = d.w, h = d.h;
+
+  // Faint vertical and horizontal crosshair
+  ctx.strokeStyle = dk ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.07)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(bx, 0); ctx.lineTo(bx, H);
+  ctx.moveTo(0, by); ctx.lineTo(W, by);
+  ctx.stroke();
+
+  ctx.save();
+  ctx.translate(bx, by);
+  ctx.globalAlpha = canDrop ? 0.88 : 0.22;
+
+  ctx.fillStyle = c.fill;
+  ctx.fillRect(-w/2, -h/2, w, h);
+  ctx.fillStyle = c.rim;
+  ctx.fillRect(-w/2, -h/2, w, 2);
+  ctx.fillRect(-w/2,  h/2-2, w, 2);
+  ctx.fillRect(-w/2, -h/2, 2, h);
+  ctx.fillRect( w/2-2, -h/2, 2, h);
+
+  if (canDrop) {
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = dk ? 'rgba(240,176,50,0.8)' : 'rgba(160,108,0,0.8)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(-w/2 - 2, -h/2 - 2, w + 4, h + 4);
+  }
+  ctx.restore();
+
+  if (canDrop) {
+    ctx.font = '9px IBM Plex Mono,monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = dk ? 'rgba(240,176,50,0.88)' : 'rgba(160,108,0,0.88)';
+    ctx.fillText('PLACE', bx, by - h/2 - 9);
+    ctx.fillStyle = dk ? 'rgba(160,160,160,0.55)' : 'rgba(80,80,80,0.55)';
+    ctx.fillText('[R] rotate', bx, by + h/2 + 14);
+  }
+}
+
+function drawWarning() {
+  for (const { body } of phys) {
+    if (body.position.y > H) continue;
+    const n = ((body.angle % (2*Math.PI)) + 2*Math.PI) % (2*Math.PI);
+    const tilt = Math.min(n, 2*Math.PI - n);
+    if (tilt > 0.28) {
+      const show = prefRed || (Math.sin(Date.now() / 140) > 0);
+      if (show) {
+        ctx.fillStyle = 'rgba(212, 76, 58, 0.94)';
+        ctx.font = 'bold 10px IBM Plex Mono,monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('⚠  UNSTABLE LOAD  ⚠', W / 2, H - 8);
+      }
+      break;
+    }
+  }
+}
+
+// ── Main loop ───────────────────────────────────────────────────────────────
+
+function loop() {
+  requestAnimationFrame(loop);
+  const dk = isDark();
+
+  if (!over) {
+    Engine.update(eng, 1000 / 60);
+
+    if (!canDrop && settleT > 0 && --settleT === 0) canDrop = true;
+
+    // Detect fallen boxes
+    for (const pb of phys) {
+      if (fallen.has(pb.body.id)) continue;
+      const { x, y } = pb.body.position;
+      if (y > H + 85 || Math.abs(x - W / 2) > W) {
+        fallen.add(pb.body.id);
+        dropCnt++;
+        Composite.remove(world, pb.body);
+        updateUI();
+      }
+    }
+    phys = phys.filter(pb => !fallen.has(pb.body.id));
+  }
+
+  drawBg(dk);
+  drawPallet(dk);
+  for (const { body, spec } of phys) drawPhysBox(body, spec, dk);
+  drawGhost(dk);
+  drawWarning();
+}
+
+// ── Events ──────────────────────────────────────────────────────────────────
+
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  mouseX = (e.clientX - r.left) * (W / r.width);
+  mouseY = (e.clientY - r.top)  * (H / r.height);
+  nudgeX = 0; nudgeY = 0;
+});
+canvas.addEventListener('click', () => drop());
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  mouseX = (e.touches[0].clientX - r.left) * (W / r.width);
+  mouseY = (e.touches[0].clientY - r.top)  * (H / r.height);
+  nudgeX = 0; nudgeY = 0;
+}, { passive: false });
+canvas.addEventListener('touchend', e => { e.preventDefault(); drop(); }, { passive: false });
+
+document.addEventListener('keydown', e => {
+  if (e.key === ' ' || e.code === 'Space')  { e.preventDefault(); drop(); }
+  if (e.key === 'r' || e.key === 'R')        { e.preventDefault(); curRotated = !curRotated; }
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); nudgeX = Math.max(-160, nudgeX - 14); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); nudgeX = Math.min( 160, nudgeX + 14); }
+  if (e.key === 'ArrowUp')    { e.preventDefault(); nudgeY = Math.max(-160, nudgeY - 14); }
+  if (e.key === 'ArrowDown')  { e.preventDefault(); nudgeY = Math.min( 160, nudgeY + 14); }
+});
+
+document.getElementById('bship').addEventListener('click', shipPallet);
+
+// ── Boot ────────────────────────────────────────────────────────────────────
+startGame();
+requestAnimationFrame(loop);
+</script>
+
+</body></html>
