@@ -183,13 +183,15 @@ body {
       <div class="srow"><span class="sn">Pallets</span><span class="sv2" id="sp">1</span></div>
       <div class="srow"><span class="sn">Dropped</span><span class="sv2 g" id="sd">0</span></div>
       <div class="srow"><span class="sn">Crushed</span><span class="sv2 g" id="sc">0</span></div>
-      <div class="srow"><span class="sn">Remaining</span><span class="sv2" id="sr">100</span></div>
+      <div class="srow"><span class="sn">Remaining</span><span class="sv2" id="sr">180</span></div>
       <div class="srow"><span class="sn">Height</span><span class="sv2" id="sh">0.0 / 10 ft</span></div>
       <div class="srow"><span class="sn">Short</span><span class="sv2 g" id="ssh">0</span></div>
+      <div class="srow"><span class="sn">Packed</span><span class="sv2" id="spk">—</span></div>
       <div class="srow"><span class="sn">Strain</span><span class="sv2" id="ss">0%</span></div>
     </div>
 
     <button class="btn-ship" id="bship">Ship Pallet →</button>
+    <button class="btn-ship" id="bguide" style="font-size:9px;letter-spacing:1.5px">▦ Show layer guide (G)</button>
     <button class="btn-ship" id="bundo" disabled style="font-size:9px;letter-spacing:1.5px">↶ Take back box (1)</button>
 
     <div class="pblk">
@@ -217,7 +219,7 @@ body {
         <kbd>←→↑↓</kbd> nudge<br>
         <kbd>Q</kbd><kbd>E</kbd> / drag to orbit<br>
         Scroll to zoom<br><br>
-        Some boxes <b>squish</b> under<br>load and get a little crushed<br>past MAX LOAD. Rigid ones<br>never do. Build every pallet<br>over <b>10 ft</b> before shipping.<br><kbd>U</kbd> takes back one box.
+        Cartons arrive as full<br>layers — fit them like a<br>puzzle. Some <b>squish</b> under<br>load and get a little crushed<br>past MAX LOAD. Rigid ones<br>never do. Build every pallet<br>over <b>10 ft</b> before shipping.<br><kbd>U</kbd> takes back one box.<br><kbd>G</kbd> shows where it fits.
       </div>
     </div>
   </div>
@@ -235,9 +237,12 @@ const R = (a, b) => a + Math.random() * (b - a);
 const PW = 1.2, PD = 1.0;          // pallet footprint (x, z)
 const PAL_TOP = 0.15;              // deck surface height
 const MAX_H = 5.2;                 // load height limit above the deck
-const TOTAL = 100;
+const TOTAL = 180;                // about three pallets' worth
+const PH = { lin: 0.2, ang: 0.7 };                // body damping (tunable)
+const W = { top: 20, corner: 0.5, dead: 6, touch: 4, flush: 6, exposed: 12, void: 5, heavy: 3 };   // computer player's scoring weights
 const TARGET_H = 3.048;           // every shipped pallet should stand at least 10 ft
 const FIXED = 1 / 120;
+const SKIN = 0.001;                // collision shapes are 1 mm slimmer per side so neighbours never interpenetrate
 const SQUISH = 0.03;               // height lost per strain level (3 levels => 9%)
 const CRUSH_F = 0.8;               // a crushed box keeps 80% of its height (a dent, not a pancake)
 const SAFE = 0.75;                 // computer keeps strain under this
@@ -252,7 +257,7 @@ const BOX_PALETTE = [
 ];
 const TIERS = [
   { name: 'FRAGILE',    tape: 0xd44c3a, css: '#d44c3a', lo: 90, hi: 130 },
-  { name: 'STANDARD',   tape: 0xe3d3a8, css: '#b58a2a', lo: 200, hi: 300 },
+  { name: 'STANDARD',   tape: 0xe3d3a8, css: '#b58a2a', lo: 320, hi: 480 },
   { name: 'HEAVY DUTY', tape: 0x2e2a24, css: '#4c4a44', lo: 0, hi: 0 },
 ];
 
@@ -369,20 +374,36 @@ const rimMats = BOX_PALETTE.map(p => new THREE.LineBasicMaterial({ color: p.rim 
 const tapeMats = TIERS.map(t => new THREE.MeshStandardMaterial({ color: t.tape, roughness: 0.6 }));
 
 // ── Box specs ──────────────────────────────────────────────────────────────
-function genBox() {
-  const r = Math.random();
-  let a, b, c;   // x, height, z
-  if      (r < 0.20) { a = R(.55, .75); c = R(.40, .62); b = R(.12, .20); }   // flat & wide
-  else if (r < 0.40) { a = R(.30, .50); c = R(.30, .45); b = R(.16, .30); }   // small
-  else               { a = R(.35, .65); c = R(.30, .55); b = R(.20, .40); }   // medium
-  const dims = [a, b, c].map(v => Math.round(v * 100) / 100);
-  const t = Math.random(), tier = t < 0.25 ? 0 : t < 0.80 ? 1 : 2;
-  const kg = Math.max(3, Math.round(dims[0] * dims[1] * dims[2] * R(110, 250)));
-  const rigid = tier === 2 || (tier === 1 && Math.random() < 0.5);          // rigid boxes never squish or crush
-  const strength = rigid ? 1e6 : Math.round(R(TIERS[tier].lo, TIERS[tier].hi));
-  return { dims, kg, tier, strength, rigid, colorIdx: Math.floor(Math.random() * BOX_PALETTE.length) };
+// Cartons arrive as full pallet layers: each layer is a pallet-sized slab cut into 3–8 cartons of one height,
+// shuffled, so a flat, tightly packed layer always exists — you just have to find it.
+let layerNo = 0;
+function genLayer() {
+  const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+  const h = pick([2, 3, 3, 4]) / 10, pieces = [], flip = layerNo++ % 2 === 1;   // every other layer is turned 180° so seams don't line up
+  (function split(x0, z0, w, d, depth) {                            // guillotine cuts, sizes in 10 cm units
+    const mustSplit = depth === 0 || w > 7 || d > 6;
+    const canW = w >= 6, canD = d >= 6;
+    if (!canW && !canD || (!mustSplit && Math.random() < 0.35)) { pieces.push({ x0, z0, w, d }); return; }
+    if (canW && (!canD || w / 12 >= d / 10 || Math.random() < 0.3)) { const a = 3 + Math.floor(Math.random() * (w - 5)); split(x0, z0, a, d, depth + 1); split(x0 + a, z0, w - a, d, depth + 1); }
+    else { const a = 3 + Math.floor(Math.random() * (d - 5)); split(x0, z0, w, a, depth + 1); split(x0, z0 + a, w, d - a, depth + 1); }
+  })(0, 0, 12, 10, 0);
+  for (let i = pieces.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); [pieces[i], pieces[k]] = [pieces[k], pieces[i]]; }
+  return pieces.map((q, i) => {
+    const x0 = flip ? 12 - q.x0 - q.w : q.x0, z0 = flip ? 10 - q.z0 - q.d : q.z0;
+    const spec = makeSpec([q.w / 10, h, q.d / 10]);
+    spec.slot = { x: (x0 + q.w / 2) / 10 - PW / 2, z: (z0 + q.d / 2) / 10 - PD / 2 }; spec.first = i === 0;
+    return spec;
+  });
 }
-const defaultVert = spec => spec.dims.indexOf(Math.min(...spec.dims));   // widest face down
+function makeSpec(dims) {
+  const tier = Math.random() < 0.70 ? 1 : 2;                         // no fragile boxes
+  const kg = Math.max(3, Math.round(dims[0] * dims[1] * dims[2] * R(110, 250)));
+  const rigid = tier === 2 || Math.random() < 0.5;                   // rigid boxes never squish or crush
+  const strength = rigid ? 1e6 : Math.round(R(TIERS[tier].lo, TIERS[tier].hi));
+  return { dims, kg, tier, strength, rigid, home: 1, colorIdx: Math.floor(Math.random() * BOX_PALETTE.length) };
+}
+function genQueue() { const q = []; while (q.length < TOTAL) q.push(...genLayer()); return q; }
+const defaultVert = spec => spec.home ?? spec.dims.indexOf(Math.min(...spec.dims));   // widest face down
 function dimsFor(spec, vert, sw) {
   const rest = [0, 1, 2].filter(i => i !== vert).map(i => spec.dims[i]);
   let [fw, fd] = rest; if (sw) [fw, fd] = [fd, fw];
@@ -421,9 +442,9 @@ function startGame() {
   flr.addShape(new CANNON.Plane()); flr.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
   world.addBody(pal); world.addBody(flr);
 
-  queue = Array.from({ length: TOTAL }, genBox);
+  queue = genQueue();
   cur = queue.shift(); curOri = { vert: defaultVert(cur), sw: false, yaw: 0 };
-  palCnt = 1; dropCnt = 0; crushCnt = 0; shortCnt = 0; undoLeft = 1; lastPlaced = null; over = false; canDropT = 0; accum = 0;
+  packLog.length = 0; palCnt = 1; dropCnt = 0; crushCnt = 0; shortCnt = 0; undoLeft = 1; lastPlaced = null; over = false; canDropT = 0; accum = 0;
   nudge = { x: 0, z: 0 };
   ai.phase = 'idle'; ai.t = 0; ai.plan = null;
   $('over').hidden = true;
@@ -439,10 +460,10 @@ function disposeMesh(obj) {
 function addBox(spec, fw, fd, fh, x, y, z, yaw = 0) {
   const body = new CANNON.Body({
     mass: spec.kg, material: matBox, position: new CANNON.Vec3(x, y, z),
-    linearDamping: 0.05, angularDamping: 0.15,
+    linearDamping: PH.lin, angularDamping: PH.ang,
     allowSleep: true, sleepSpeedLimit: 0.12, sleepTimeLimit: 0.5,
   });
-  body.addShape(new CANNON.Box(new CANNON.Vec3(fw / 2, fh / 2, fd / 2)));
+  body.addShape(new CANNON.Box(new CANNON.Vec3(fw / 2 - SKIN, fh / 2, fd / 2 - SKIN)));
   body.quaternion.setFromEuler(0, yaw, 0);
   world.addBody(body);
 
@@ -473,7 +494,7 @@ function addBox(spec, fw, fd, fh, x, y, z, yaw = 0) {
 function setPhysHeight(r, newH) {
   const sh = r.body.shapes[0];
   const old = r.hPhys;
-  sh.halfExtents.set(r.w / 2, newH / 2, r.d / 2);
+  sh.halfExtents.set(r.w / 2 - SKIN, newH / 2, r.d / 2 - SKIN);
   sh.updateConvexPolyhedronRepresentation();
   sh.updateBoundingSphereRadius();
   r.body.updateBoundingRadius();
@@ -524,7 +545,8 @@ function stackTop(x, z, fw, fd) {
   let top = PAL_TOP;
   for (const n of nodes) {
     const b = n.bb;
-    if (b.maxX > x - fw/2 && b.minX < x + fw/2 && b.maxZ > z - fd/2 && b.minZ < z + fd/2) top = Math.max(top, b.maxY);
+    const t = 0.012;                                           // ignore sub-centimetre overlaps so a box can drop into a snug slot
+    if (b.maxX > x - fw/2 + t && b.minX < x + fw/2 - t && b.maxZ > z - fd/2 + t && b.minZ < z + fd/2 - t) top = Math.max(top, b.maxY);
   }
   return top;
 }
@@ -613,6 +635,7 @@ function shipPallet() {
   if (over || shipping) return;
   const isFinal = !cur && !queue.length;
   if (!isFinal && !recs.length) { say('Pallet is empty'); return; }
+  if (stackH > 0.9) packLog.push({ fill: packFill(), n: recs.filter(r => !r.fallen).length, ft: stackH * 3.281 });
   const short = !isFinal && stackH < TARGET_H - 0.001;
   if (short) { shortCnt++; say('Shipped short — under 10 ft'); }
   const group = new THREE.Group(); scene.add(group);
@@ -637,15 +660,17 @@ function updateShipping(dt) {
   }
 }
 function endGame() {
-  over = true; $('over').hidden = false;
+  over = true;
+  const avgPack = packLog.length ? Math.round(100 * packLog.reduce((a, p) => a + p.fill, 0) / packLog.length) : 0; $('over').hidden = false;
   $('ftbl').innerHTML =
     `<span class="sl">Pallets used</span><span class="sv">${palCnt}</span>
      <span class="sl">Boxes dropped</span><span class="sv">${dropCnt}</span>
      <span class="sl">Boxes crushed</span><span class="sv">${crushCnt}</span>
-     <span class="sl">Short pallets</span><span class="sv">${shortCnt}</span>`;
+     <span class="sl">Short pallets</span><span class="sv">${shortCnt}</span>
+     <span class="sl">Avg packing</span><span class="sv">${avgPack}%</span>`;
   const dmg = dropCnt + crushCnt + shortCnt;
   $('frate').textContent =
-    dmg === 0 && palCnt <= 2 ? '★★★  FLAWLESS' :
+    dmg === 0 && avgPack >= 60 ? '★★★  FLAWLESS' :
     dmg === 0                ? '★★  CLEAN LOAD' :
     dmg <= 2                 ? '★  GOOD EFFORT' : 'KEEP PRACTICING';
 }
@@ -678,6 +703,12 @@ function updateUI() {
   }
 }
 let stackH = 0;
+const packLog = [];
+function packFill() {                                    // share of the pallet's volume (to the top of the stack) filled with boxes
+  if (stackH < 0.9) return 0;                            // too early to say
+  let v = 0; for (const r of recs) if (!r.fallen) v += r.w * r.d * r.h0;
+  return v / (PW * PD * stackH);
+}
 function statusTick() {
   let top = PAL_TOP, maxS = 0, tilt = false;
   for (const n of nodes) {
@@ -686,6 +717,7 @@ function statusTick() {
     if (Math.acos(clamp(1 - 2 * (q.x * q.x + q.z * q.z), -1, 1)) > 0.28) tilt = true;
   }
   const he = $('sh'), ft = stackH * 3.281; he.textContent = ft.toFixed(1) + ' / 10 ft'; he.className = 'sv2 ' + (stackH >= TARGET_H ? 'g' : '');
+  const pk = packFill(), pe = $('spk'); pe.textContent = pk ? Math.round(pk * 100) + '%' : '—'; pe.className = 'sv2 ' + (pk >= 0.8 ? 'g' : pk >= 0.65 ? 'y' : pk ? 'w' : '');
   const sc = $('ssh'); sc.textContent = shortCnt; sc.className = 'sv2 ' + (shortCnt ? 'w' : 'g');
   const bs = $('bship'), lab = (!cur && !queue.length) ? 'Finish →' : stackH < TARGET_H ? 'Ship (short!) →' : 'Ship Pallet →';
   if (bs.textContent !== lab) bs.textContent = lab;
@@ -730,6 +762,7 @@ addEventListener('keydown', e => {
   }
   else if (k === 'f' || k === 'F') { e.preventDefault(); manual(); if (cur) { curOri.vert = (curOri.vert + 1) % 3; updateUI(); } }
   else if (k === 't' || k === 'T') setAI(!ai.on);
+  else if (k === 'g' || k === 'G') { guideOn = !guideOn; $('bguide').classList.toggle('on', guideOn); }
   else if (k === 'u' || k === 'U' || k === 'Backspace') { e.preventDefault(); manual(); undo(); }
   else if (k.startsWith('Arrow')) {
     e.preventDefault(); manual();
@@ -746,6 +779,7 @@ $('camL').onclick = () => cam.yaw += 0.35;
 $('camR').onclick = () => cam.yaw -= 0.35;
 $('bship').onclick = () => { manual(); shipPallet(); };
 $('bundo').onclick = () => { manual(); undo(); };
+$('bguide').onclick = () => { guideOn = !guideOn; $('bguide').classList.toggle('on', guideOn); };
 $('bai').onclick = () => setAI(!ai.on);
 $('again').onclick = () => { setAI(false); startGame(); };
 $('againAi').onclick = () => { startGame(); setAI(true); };
@@ -760,8 +794,9 @@ function heightmap() {
   const h = new Float32Array(NX * NZ).fill(PAL_TOP), own = new Array(NX * NZ).fill(null);
   for (const n of nodes) {
     const b = n.bb;
-    const x0 = Math.max(0, Math.floor((b.minX + PW / 2) / RES)), x1 = Math.min(NX - 1, Math.floor((b.maxX + PW / 2) / RES));
-    const z0 = Math.max(0, Math.floor((b.minZ + PD / 2) / RES)), z1 = Math.min(NZ - 1, Math.floor((b.maxZ + PD / 2) / RES));
+    const E = 0.012;                                            // boxes that merely touch don't share a cell
+    const x0 = Math.max(0, Math.floor((b.minX + E + PW / 2) / RES)), x1 = Math.min(NX - 1, Math.floor((b.maxX - E + PW / 2) / RES));
+    const z0 = Math.max(0, Math.floor((b.minZ + E + PD / 2) / RES)), z1 = Math.min(NZ - 1, Math.floor((b.maxZ - E + PD / 2) / RES));
     const q = n.rec.body.quaternion, yaw = 2 * Math.atan2(q.y, q.w), r = n.rec;
     const turned = Math.abs(Math.sin(2 * yaw)) > 0.12;              // box is off-axis: use its real outline
     const c = Math.cos(yaw), sn = Math.sin(yaw), cx = r.body.position.x, cz = r.body.position.z;
@@ -778,32 +813,38 @@ function heightmap() {
   return { h, own };
 }
 
-function planPlacement(spec, minRatio = 0.75, allowTippy = false, comTol = 0.25) {
+function planPlacement(spec, minRatio = 0.75, allowTippy = false, comTol = 0.25, only = null) {
   const { h, own } = heightmap();
   const edgesX = new Set(), edgesZ = new Set();
   for (const n of nodes) { edgesX.add(n.bb.minX); edgesX.add(n.bb.maxX); edgesZ.add(n.bb.minZ); edgesZ.add(n.bb.maxZ); }
   let best = null;
-  const weak = 1 - clamp(spec.strength / 300, 0, 1);
 
   for (let vert = 0; vert < 3; vert++) for (let sw = 0; sw < 2; sw++) {
+    if (only && (vert !== only.vert || !!sw !== only.sw)) continue;
     const { fw, fd, fh } = dimsFor(spec, vert, !!sw);
     if (fw > PW + 1e-6 || fd > PD + 1e-6) continue;
     if (sw && Math.abs(fw - fd) < 0.005) continue;
     const xMin = -PW / 2 + fw / 2, xMax = PW / 2 - fw / 2, zMin = -PD / 2 + fd / 2, zMax = PD / 2 - fd / 2;
     const xs = new Set([xMin, xMax]), zs = new Set([zMin, zMax]);
-    for (let x = xMin; x <= xMax + 1e-6; x += RES) xs.add(x);
-    for (let z = zMin; z <= zMax + 1e-6; z += RES) zs.add(z);
-    for (const e of edgesX) { xs.add(e + fw / 2 + 0.003); xs.add(e - fw / 2 - 0.003); }
-    for (const e of edgesZ) { zs.add(e + fd / 2 + 0.003); zs.add(e - fd / 2 - 0.003); }
+    if (only) {                                                // the box's own tile, give or take a few centimetres of drift
+      xs.clear(); zs.clear();
+      for (const d of (only.drift ? [0, -0.01, 0.01, -0.02, 0.02, -0.03, 0.03] : [0])) { xs.add(clamp(only.x + d, xMin, xMax)); zs.add(clamp(only.z + d, zMin, zMax)); }
+    }
+    else {
+      for (let x = xMin; x <= xMax + 1e-6; x += RES) xs.add(x);
+      for (let z = zMin; z <= zMax + 1e-6; z += RES) zs.add(z);
+      for (const e of edgesX) { xs.add(e + fw / 2 + 0.001); xs.add(e - fw / 2 - 0.001); }
+      for (const e of edgesZ) { zs.add(e + fd / 2 + 0.001); zs.add(e - fd / 2 - 0.001); }
+    }
     const tippy = fh > 1.4 * Math.min(fw, fd);
     if (tippy && !allowTippy) continue;                    // don't stand a box on a narrow end unless desperate
 
     for (const x of xs) {
       if (x < xMin - 1e-6 || x > xMax + 1e-6) continue;
-      const ix0 = Math.max(0, Math.floor((x - fw / 2 + PW / 2) / RES + 0.001)), ix1 = Math.min(NX - 1, Math.ceil((x + fw / 2 + PW / 2) / RES - 0.001) - 1);
+      const ix0 = Math.max(0, Math.floor((x - fw / 2 + PW / 2 + 0.01) / RES)), ix1 = Math.min(NX - 1, Math.floor((x + fw / 2 + PW / 2 - 0.01) / RES));
       for (const z of zs) {
         if (z < zMin - 1e-6 || z > zMax + 1e-6) continue;
-        const iz0 = Math.max(0, Math.floor((z - fd / 2 + PD / 2) / RES + 0.001)), iz1 = Math.min(NZ - 1, Math.ceil((z + fd / 2 + PD / 2) / RES - 0.001) - 1);
+        const iz0 = Math.max(0, Math.floor((z - fd / 2 + PD / 2 + 0.01) / RES)), iz1 = Math.min(NZ - 1, Math.floor((z + fd / 2 + PD / 2 - 0.01) / RES));
         let L = 0, tot = 0;
         for (let ix = ix0; ix <= ix1; ix++) for (let iz = iz0; iz <= iz1; iz++) { const v = h[ix * NZ + iz]; if (v > L) L = v; tot++; }
         if (L + fh - PAL_TOP > MAX_H + 1e-6) continue;
@@ -839,11 +880,20 @@ function planPlacement(spec, minRatio = 0.75, allowTippy = false, comTol = 0.25)
         for (let ix = ix0; ix <= ix1; ix++) for (const iz of [iz0 - 1, iz1 + 1]) { ring++; if (iz < 0 || iz >= NZ || h[ix * NZ + iz] >= L + 0.4 * fh) touch++; if (iz >= 0 && iz < NZ && Math.abs(h[ix * NZ + iz] - (L + fh)) < 0.03) flush++; if (iz >= 0 && iz < NZ && h[ix * NZ + iz] < L - 0.15) exposed++; }
         for (let iz = iz0; iz <= iz1; iz++) for (const ix of [ix0 - 1, ix1 + 1]) { ring++; if (ix < 0 || ix >= NX || h[ix * NZ + iz] >= L + 0.4 * fh) touch++; if (ix >= 0 && ix < NX && Math.abs(h[ix * NZ + iz] - (L + fh)) < 0.03) flush++; if (ix >= 0 && ix < NX && h[ix * NZ + iz] < L - 0.15) exposed++; }
         const hRel = L - PAL_TOP;
+        // dead gaps: free strips beside the box that are too narrow for any carton (smallest is 30 cm)
+        let deadGaps = 0;
+        const izc = clamp(Math.round((z + PD / 2) / RES - 0.5), 0, NZ - 1), ixc = clamp(Math.round((x + PW / 2) / RES - 0.5), 0, NX - 1);
+        for (const [sx, sz, bx, bz] of [[1, 0, ix1, izc], [-1, 0, ix0, izc], [0, 1, ixc, iz1], [0, -1, ixc, iz0]]) {
+          let cnt = 0, ix2 = bx + sx, iz2 = bz + sz;
+          while (ix2 >= 0 && ix2 < NX && iz2 >= 0 && iz2 < NZ && h[ix2 * NZ + iz2] < L - 0.02) { cnt++; ix2 += sx; iz2 += sz; }
+          const gap = cnt * RES;
+          if (gap > 0.02 && gap < 0.29) deadGaps++;
+        }
         let void_ = 0;                                              // empty space left under the box
         for (let ix = ix0; ix <= ix1; ix++) for (let iz = iz0; iz <= iz1; iz++) void_ += L - h[ix * NZ + iz];
         void_ *= RES * RES;
-        const score = (hRel + fh) * 7 + hRel * (spec.kg / 12) * 3 + void_ / (fw * fd * fh) * 5 - (touch / ring) * 4 - (flush / ring) * 5 + (exposed / ring) * 8 + (tippy ? 2.5 : 0)
-          + weak * (fw * fd / 0.2) * clamp(1 - hRel / 1.5, 0, 1) * 5;   // keep weak boxes out of the load-bearing layers
+        const score = (hRel + fh) * W.top + hRel * (spec.kg / 12) * W.heavy + void_ / (fw * fd * fh) * W.void - (touch / ring) * W.touch - (flush / ring) * W.flush + (exposed / ring) * W.exposed + (tippy ? 2.5 : 0) + deadGaps * W.dead
+          + ((x - fw / 2 + PW / 2) / PW + (z - fd / 2 + PD / 2) / PD) * W.corner;   // bottom-left fill: grow layers from a corner, no air gaps
         if (!best || score < best.score) best = { score, vert, sw: !!sw, x, z };
       }
     }
@@ -871,9 +921,11 @@ function aiTick(dt) {
   if (ai.phase === 'idle') {
     if (canDropT > 0 || ai.t < 0.25 || !isSettled()) return;
     if (!cur) { shipPallet(); return; }
-    if (stackH >= TARGET_H + 0.15) { shipPallet(); return; }          // tall enough — send it out before it gets wobbly
-    let plan = planPlacement(cur);
-    if (!plan && stackH < TARGET_H) plan = planPlacement(cur, 0.55, false, 0.18) || planPlacement(cur, 0.75, true) || planPlacement(cur, 0.5, true, 0.15);
+    if (stackH >= TARGET_H + 0.15 && cur.first) { shipPallet(); return; }   // tall enough and the layer is complete — send it out
+    const slot = cur.slot && { vert: cur.home, sw: false, x: cur.slot.x, z: cur.slot.z };       // its tile in the layer
+    let plan = slot && (planPlacement(cur, 0.75, false, 0.25, slot) || planPlacement(cur, 0.5, false, 0.2, slot) || planPlacement(cur, 0.75, false, 0.25, { ...slot, drift: true }));
+    if (!plan) plan = planPlacement(cur);
+    if (!plan && stackH < Math.min(TARGET_H, 2.0)) plan = planPlacement(cur, 0.55, false, 0.18) || planPlacement(cur, 0.75, true);   // risky fallbacks only while the stack is still low
     if (!plan) { shipPallet(); return; }
     curOri.vert = plan.vert; curOri.sw = plan.sw; curOri.yaw = 0; updateUI();
     ai.plan = plan; ai.from = { x: ghost.x, z: ghost.z }; ai.phase = 'move'; ai.t = 0;
@@ -896,7 +948,10 @@ const ghostMesh = new THREE.Mesh(boxGeo, ghostMat);
 const ghostEdges = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({ color: 0xffffff })); ghostMesh.add(ghostEdges);
 const footMat = new THREE.MeshBasicMaterial({ color: 0xf0b42a, transparent: true, opacity: 0.4, depthWrite: false });
 const footMesh = new THREE.Mesh(planeGeo, footMat); footMesh.rotation.order = 'YXZ'; footMesh.rotation.x = -Math.PI / 2;
-scene.add(ghostMesh, footMesh);
+const guideMat = new THREE.MeshBasicMaterial({ color: 0x52c47a, transparent: true, opacity: 0.45, depthWrite: false });
+const guideMesh = new THREE.Mesh(planeGeo, guideMat); guideMesh.rotation.x = -Math.PI / 2; guideMesh.visible = false;
+let guideOn = false;
+scene.add(ghostMesh, footMesh, guideMesh);
 
 function refreshGhost() {
   if (!cur) { ghostMesh.visible = footMesh.visible = false; return; }
@@ -910,7 +965,12 @@ function refreshGhost() {
   ghost.top = top;
 }
 function updateGhost() {
+  guideMesh.visible = false;
   if (!cur || shipping || over) { ghostMesh.visible = footMesh.visible = false; return; }
+  if (guideOn && cur.slot) {                                           // show where this carton belongs in its layer
+    const gw = cur.dims[0], gd = cur.dims[2], gt = stackTop(cur.slot.x, cur.slot.z, gw, gd);
+    guideMesh.visible = true; guideMesh.position.set(cur.slot.x, gt + 0.006, cur.slot.z); guideMesh.scale.set(gw, gd, 1);
+  }
   if (!ai.on) {
     refreshGhost();
     for (let k = 0; k < 2; k++) {                                   // aim on the plane through the box centre
@@ -990,6 +1050,12 @@ startGame(); resize(); requestAnimationFrame(frame);
 // test hook
 window.__pl = {
   get recs() { return recs; }, get state() { return { palCnt, dropCnt, crushCnt, shortCnt, over, remaining: queue.length + (cur ? 1 : 0), shipping: !!shipping }; },
+  cam, get stackH() { return stackH; }, packLog,
+  tune(o) { Object.assign(W, o); return { ...W }; },
+  phys(o) { Object.assign(PH, o); return { ...PH }; },
+  planCur() { if (!cur) return null; const p = planPlacement(cur); if (!p) return null; const d = dimsFor(cur, p.vert, p.sw); return { ...p, ...d, dims: cur.dims }; },
+  heightmap, get cur() { return cur; },
+  packing() { let v = 0, n = 0; for (const r of recs) if (!r.fallen) { v += r.w * r.d * r.h0; n++; } return { n, fillPct: stackH ? Math.round(100 * v / (PW * PD * stackH)) : 0 }; },
   startGame, setAI, setSpeed: s => ai.speed = s,
   sim(sec) { for (let t = 0; t < sec; t += 1 / 60) update(1 / 60); },
   forceCur: o => { if (cur) Object.assign(cur, o); },
