@@ -183,12 +183,14 @@ body {
       <div class="srow"><span class="sn">Pallets</span><span class="sv2" id="sp">1</span></div>
       <div class="srow"><span class="sn">Dropped</span><span class="sv2 g" id="sd">0</span></div>
       <div class="srow"><span class="sn">Crushed</span><span class="sv2 g" id="sc">0</span></div>
-      <div class="srow"><span class="sn">Remaining</span><span class="sv2" id="sr">28</span></div>
-      <div class="srow"><span class="sn">Height</span><span class="sv2" id="sh">0.00</span></div>
+      <div class="srow"><span class="sn">Remaining</span><span class="sv2" id="sr">100</span></div>
+      <div class="srow"><span class="sn">Height</span><span class="sv2" id="sh">0.0 / 10 ft</span></div>
+      <div class="srow"><span class="sn">Short</span><span class="sv2 g" id="ssh">0</span></div>
       <div class="srow"><span class="sn">Strain</span><span class="sv2" id="ss">0%</span></div>
     </div>
 
     <button class="btn-ship" id="bship">Ship Pallet →</button>
+    <button class="btn-ship" id="bundo" disabled style="font-size:9px;letter-spacing:1.5px">↶ Take back box (1)</button>
 
     <div class="pblk">
       <div class="plbl">Autopilot</div>
@@ -210,12 +212,12 @@ body {
       <div class="inst">
         Move mouse to aim<br>
         <kbd>Click</kbd> / <kbd>Space</kbd> place<br>
-        <kbd>R</kbd> turn · <kbd>F</kbd> flip on side<br>
+        <kbd>R</kbd> turn 90° · <kbd>F</kbd> flip<br>
+        <kbd>Z</kbd><kbd>X</kbd> rotate any angle<br>
         <kbd>←→↑↓</kbd> nudge<br>
         <kbd>Q</kbd><kbd>E</kbd> / drag to orbit<br>
         Scroll to zoom<br><br>
-        Boxes <b>squish</b> under load.<br>
-        Beyond MAX LOAD they get<br>crushed. Heavy low, fragile<br>on top. Fewer pallets = better.
+        Some boxes <b>squish</b> under<br>load and get a little crushed<br>past MAX LOAD. Rigid ones<br>never do. Build every pallet<br>over <b>10 ft</b> before shipping.<br><kbd>U</kbd> takes back one box.
       </div>
     </div>
   </div>
@@ -232,12 +234,13 @@ const R = (a, b) => a + Math.random() * (b - a);
 // ── Constants (1 unit = 1 metre) ───────────────────────────────────────────
 const PW = 1.2, PD = 1.0;          // pallet footprint (x, z)
 const PAL_TOP = 0.15;              // deck surface height
-const MAX_H = 1.3;                 // load height limit above the deck
-const TOTAL = 28;
+const MAX_H = 5.2;                 // load height limit above the deck
+const TOTAL = 100;
+const TARGET_H = 3.048;           // every shipped pallet should stand at least 10 ft
 const FIXED = 1 / 120;
-const SQUISH = 0.05;               // height lost per strain level (3 levels => 15%)
-const CRUSH_F = 0.5;               // height factor once crushed
-const SAFE = 0.85;                 // computer keeps strain under this
+const SQUISH = 0.03;               // height lost per strain level (3 levels => 9%)
+const CRUSH_F = 0.8;               // a crushed box keeps 80% of its height (a dent, not a pancake)
+const SAFE = 0.75;                 // computer keeps strain under this
 
 const BOX_PALETTE = [
   { fill: 0x5a98e0, rim: 0x2a5a9a },
@@ -248,9 +251,9 @@ const BOX_PALETTE = [
   { fill: 0xe8c030, rim: 0x9a7808 },
 ];
 const TIERS = [
-  { name: 'FRAGILE',    tape: 0xd44c3a, css: '#d44c3a', lo: 12, hi: 20 },
-  { name: 'STANDARD',   tape: 0xe3d3a8, css: '#b58a2a', lo: 28, hi: 45 },
-  { name: 'HEAVY DUTY', tape: 0x2e2a24, css: '#4c4a44', lo: 70, hi: 90 },
+  { name: 'FRAGILE',    tape: 0xd44c3a, css: '#d44c3a', lo: 90, hi: 130 },
+  { name: 'STANDARD',   tape: 0xe3d3a8, css: '#b58a2a', lo: 200, hi: 300 },
+  { name: 'HEAVY DUTY', tape: 0x2e2a24, css: '#4c4a44', lo: 0, hi: 0 },
 ];
 
 // ── Renderer / scene ───────────────────────────────────────────────────────
@@ -262,7 +265,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(42, 5 / 6, 0.1, 60);
-const cam = { yaw: 0.55, pitch: 0.42, dist: 3.5 };
+const cam = { yaw: 0.55, pitch: 0.42, dist: 3.8, extra: 0 };
 const camTarget = new THREE.Vector3(0, PAL_TOP + 0.42, 0);
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x6a5a48, 1.1));
@@ -270,10 +273,10 @@ const sun = new THREE.DirectionalLight(0xfff3dc, 2.3);
 sun.position.set(2.2, 4.2, 2.6);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -2.2, right: 2.2, top: 2.6, bottom: -1.6, near: 1, far: 12 });
+Object.assign(sun.shadow.camera, { left: -4.5, right: 4.5, top: 5, bottom: -5, near: 1, far: 30 });
 sun.shadow.bias = -0.0006;
 sun.shadow.normalBias = 0.01;
-scene.add(sun);
+scene.add(sun, sun.target);
 
 const floorMat = new THREE.MeshStandardMaterial({ roughness: 0.95 });
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), floorMat);
@@ -293,10 +296,16 @@ const bayMat = new THREE.MeshBasicMaterial({ color: 0xf0b42a, transparent: true,
 // height-limit frame
 const limitLines = new THREE.LineSegments(
   new THREE.EdgesGeometry(new THREE.BoxGeometry(PW + 0.04, MAX_H, PD + 0.04)),
-  new THREE.LineDashedMaterial({ color: 0xf0b42a, dashSize: 0.06, gapSize: 0.05, transparent: true, opacity: 0.45 }));
+  new THREE.LineDashedMaterial({ color: 0xf0b42a, dashSize: 0.1, gapSize: 0.08, transparent: true, opacity: 0.3 }));
 limitLines.computeLineDistances();
 limitLines.position.y = PAL_TOP + MAX_H / 2;
 scene.add(limitLines);
+const targetLine = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(-PW / 2 - 0.03, 0, -PD / 2 - 0.03), new THREE.Vector3(PW / 2 + 0.03, 0, -PD / 2 - 0.03),
+  new THREE.Vector3(PW / 2 + 0.03, 0, PD / 2 + 0.03), new THREE.Vector3(-PW / 2 - 0.03, 0, PD / 2 + 0.03)]),
+  new THREE.LineBasicMaterial({ color: 0x52c47a }));
+targetLine.position.y = PAL_TOP + TARGET_H;                           // the 10 ft mark
+scene.add(targetLine);
 
 function isDark() {
   const t = document.documentElement.getAttribute('data-theme');
@@ -342,7 +351,7 @@ const edgeGeo = new THREE.EdgesGeometry(boxGeo);
 const planeGeo = new THREE.PlaneGeometry(1, 1);
 const labelCache = new Map();
 function labelTex(spec) {
-  const key = spec.kg + '|' + spec.strength + '|' + spec.tier;
+  const key = spec.kg + '|' + spec.strength + '|' + spec.tier + '|' + spec.rigid;
   if (labelCache.has(key)) return labelCache.get(key);
   const c = document.createElement('canvas'); c.width = 256; c.height = 128;
   const g = c.getContext('2d'), t = TIERS[spec.tier];
@@ -351,7 +360,7 @@ function labelTex(spec) {
   g.textAlign = 'center'; g.textBaseline = 'middle';
   g.fillStyle = '#1c1a15'; g.font = 'bold 54px "IBM Plex Mono", monospace'; g.fillText(spec.kg + ' kg', 128, 42);
   g.fillStyle = t.css; g.font = 'bold 24px "IBM Plex Mono", monospace'; g.fillText(t.name, 128, 85);
-  g.fillStyle = '#555'; g.font = '19px "IBM Plex Mono", monospace'; g.fillText('MAX LOAD ' + spec.strength + ' kg', 128, 110);
+  g.fillStyle = '#555'; g.font = '19px "IBM Plex Mono", monospace'; g.fillText(spec.rigid ? 'RIGID · NO CRUSH' : 'MAX LOAD ' + spec.strength + ' kg', 128, 110);
   const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
   const mat = new THREE.MeshBasicMaterial({ map: tex, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   labelCache.set(key, mat); return mat;
@@ -369,8 +378,9 @@ function genBox() {
   const dims = [a, b, c].map(v => Math.round(v * 100) / 100);
   const t = Math.random(), tier = t < 0.25 ? 0 : t < 0.80 ? 1 : 2;
   const kg = Math.max(3, Math.round(dims[0] * dims[1] * dims[2] * R(110, 250)));
-  const strength = Math.round(R(TIERS[tier].lo, TIERS[tier].hi));
-  return { dims, kg, tier, strength, colorIdx: Math.floor(Math.random() * BOX_PALETTE.length) };
+  const rigid = tier === 2 || (tier === 1 && Math.random() < 0.5);          // rigid boxes never squish or crush
+  const strength = rigid ? 1e6 : Math.round(R(TIERS[tier].lo, TIERS[tier].hi));
+  return { dims, kg, tier, strength, rigid, colorIdx: Math.floor(Math.random() * BOX_PALETTE.length) };
 }
 const defaultVert = spec => spec.dims.indexOf(Math.min(...spec.dims));   // widest face down
 function dimsFor(spec, vert, sw) {
@@ -381,9 +391,9 @@ function dimsFor(spec, vert, sw) {
 
 // ── Game state ─────────────────────────────────────────────────────────────
 let world, accum = 0;
-let queue = [], cur = null, curOri = { vert: 0, sw: false };
+let queue = [], cur = null, curOri = { vert: 0, sw: false, yaw: 0 };
 let recs = [], nodes = [];
-let palCnt = 1, dropCnt = 0, crushCnt = 0;
+let palCnt = 1, dropCnt = 0, crushCnt = 0, shortCnt = 0, undoLeft = 1, lastPlaced = null;
 let over = false, canDropT = 0, shipping = null, simTime = 0;
 const ghost = { x: 0, z: 0, y: 0, fw: .5, fd: .4, fh: .2, fits: true };
 const ndc = new THREE.Vector2(0, 0);
@@ -401,9 +411,9 @@ function startGame() {
 
   world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
   world.allowSleep = true;
-  world.solver.iterations = 30;
+  world.solver.iterations = 60;
   world.defaultContactMaterial.restitution = 0;
-  world.addContactMaterial(new CANNON.ContactMaterial(matBox, matBox, { friction: 0.7, restitution: 0 }));
+  world.addContactMaterial(new CANNON.ContactMaterial(matBox, matBox, { friction: 0.9, restitution: 0, contactEquationStiffness: 1e8, contactEquationRelaxation: 4 }));
   world.addContactMaterial(new CANNON.ContactMaterial(matBox, matPal, { friction: 1.0, restitution: 0 }));
   const pal = new CANNON.Body({ mass: 0, material: matPal, position: new CANNON.Vec3(0, PAL_TOP / 2, 0) });
   pal.addShape(new CANNON.Box(new CANNON.Vec3(PW / 2, PAL_TOP / 2, PD / 2)));
@@ -412,8 +422,8 @@ function startGame() {
   world.addBody(pal); world.addBody(flr);
 
   queue = Array.from({ length: TOTAL }, genBox);
-  cur = queue.shift(); curOri = { vert: defaultVert(cur), sw: false };
-  palCnt = 1; dropCnt = 0; crushCnt = 0; over = false; canDropT = 0; accum = 0;
+  cur = queue.shift(); curOri = { vert: defaultVert(cur), sw: false, yaw: 0 };
+  palCnt = 1; dropCnt = 0; crushCnt = 0; shortCnt = 0; undoLeft = 1; lastPlaced = null; over = false; canDropT = 0; accum = 0;
   nudge = { x: 0, z: 0 };
   ai.phase = 'idle'; ai.t = 0; ai.plan = null;
   $('over').hidden = true;
@@ -426,13 +436,14 @@ function disposeMesh(obj) {
 }
 
 // ── Box creation ───────────────────────────────────────────────────────────
-function addBox(spec, fw, fd, fh, x, y, z) {
+function addBox(spec, fw, fd, fh, x, y, z, yaw = 0) {
   const body = new CANNON.Body({
     mass: spec.kg, material: matBox, position: new CANNON.Vec3(x, y, z),
     linearDamping: 0.05, angularDamping: 0.15,
     allowSleep: true, sleepSpeedLimit: 0.12, sleepTimeLimit: 0.5,
   });
   body.addShape(new CANNON.Box(new CANNON.Vec3(fw / 2, fh / 2, fd / 2)));
+  body.quaternion.setFromEuler(0, yaw, 0);
   world.addBody(body);
 
   const pal = BOX_PALETTE[spec.colorIdx];
@@ -450,11 +461,11 @@ function addBox(spec, fw, fd, fh, x, y, z) {
   const lhT = Math.min(.09, .6 * fd, .3 * fw), lwT = lhT * 2;
   const lt = new THREE.Mesh(planeGeo, lm); lt.rotation.x = -Math.PI / 2; lt.scale.set(lwT / fw, lhT / fd, 1); lt.position.set(0, 0.502, 0.25); g.add(lt);
   g.userData.ownMat = mats;
-  g.position.set(x, y, z); g.scale.set(fw, fh, fd);
+  g.position.set(x, y, z); g.quaternion.setFromEuler(new THREE.Euler(0, yaw, 0)); g.scale.set(fw, fh, fd);
   scene.add(g);
 
   const rec = { body, mesh: g, mats, spec, w: fw, d: fd, h0: fh, hPhys: fh, hVis: fh, level: 0, strain: 0, overT: 0,
-                crushed: false, fallen: false, removeAt: 0 };
+                crushed: false, fallen: false, placed: { x, y, z, yaw } };
   recs.push(rec);
   return rec;
 }
@@ -505,6 +516,10 @@ function analyze() {
   }
   return list;
 }
+function footprint(fw, fd, yaw) {                 // axis-aligned extent of a turned box
+  const c = Math.abs(Math.cos(yaw)), s = Math.abs(Math.sin(yaw));
+  return [c * fw + s * fd, s * fw + c * fd];
+}
 function stackTop(x, z, fw, fd) {
   let top = PAL_TOP;
   for (const n of nodes) {
@@ -517,7 +532,8 @@ function stackTop(x, z, fw, fd) {
 // ── Crush logic ────────────────────────────────────────────────────────────
 function crushTick(dt) {
   for (const n of nodes) {
-    const r = n.rec, c = n.load / r.spec.strength;
+    const r = n.rec; if (r.spec.rigid) { r.strain = 0; continue; }
+    const c = n.load / r.spec.strength;
     r.strain += (c - r.strain) * Math.min(1, dt * 6);
     if (r.crushed) continue;
     const target = Math.round(clamp(r.strain, 0, 1) * 3);
@@ -531,21 +547,15 @@ function crushTick(dt) {
 function crush(r) {
   r.crushed = true; crushCnt++;
   setPhysHeight(r, r.h0 * CRUSH_F);
-  for (const m of r.mats) m.color.multiplyScalar(0.55);
-  const p = r.body.position;
-  spawnDebris(p.x, p.y + r.hPhys / 2, p.z, BOX_PALETTE[r.spec.colorIdx].fill, 14, r.w, r.d);
-  say('📦 Crushed!');
+  for (const m of r.mats) m.color.multiplyScalar(0.8);
+  say('📦 Crushed a little');
   updateUI();
 }
 function fallTick() {
   for (const r of recs) {
-    if (!r.fallen && r.body.position.y < PAL_TOP - 0.1) {
-      r.fallen = true; dropCnt++; r.removeAt = simTime + 2.2; updateUI();
+    if (!r.fallen && aabbOf(r).minY < PAL_TOP - 0.04) {      // bottom is below the deck: it's on the floor
+      r.fallen = true; dropCnt++; updateUI();
     }
-  }
-  for (let i = recs.length - 1; i >= 0; i--) {
-    const r = recs[i];
-    if (r.fallen && simTime > r.removeAt) { world.removeBody(r.body); disposeMesh(r.mesh); recs.splice(i, 1); }
   }
 }
 
@@ -577,23 +587,38 @@ function drop() {
   if (over || shipping || !cur || canDropT > 0) return false;
   if (!ghost.fits) { say('Too tall — ship it'); return false; }
   const { fw, fd, fh } = dimsFor(cur, curOri.vert, curOri.sw);
-  const y = stackTop(ghost.x, ghost.z, fw, fd) + fh / 2 + 0.03;
-  addBox(cur, fw, fd, fh, ghost.x, y, ghost.z);
+  const [efw, efd] = footprint(fw, fd, curOri.yaw);
+  const y = stackTop(ghost.x, ghost.z, efw, efd) + fh / 2 + 0.03;
+  lastPlaced = addBox(cur, fw, fd, fh, ghost.x, y, ghost.z, curOri.yaw);
   cur = queue.shift() || null;
-  if (cur) curOri = { vert: defaultVert(cur), sw: false };
+  if (cur) curOri = { vert: defaultVert(cur), sw: false, yaw: 0 };
   canDropT = 0.3; nudge = { x: 0, z: 0 };
   updateUI();
   return true;
+}
+
+function undo() {
+  if (over || shipping || !undoLeft || !lastPlaced || !recs.includes(lastPlaced)) return;
+  const r = lastPlaced;
+  world.removeBody(r.body); disposeMesh(r.mesh); recs.splice(recs.indexOf(r), 1);
+  if (r.fallen) dropCnt--;
+  if (cur) queue.unshift(cur);
+  cur = r.spec; curOri = { vert: defaultVert(cur), sw: false, yaw: 0 };
+  lastPlaced = null; undoLeft--; canDropT = 0; nudge = { x: 0, z: 0 };
+  for (const o of recs) o.body.wakeUp();
+  nodes = analyze(); say('↶ Box taken back'); updateUI();
 }
 
 function shipPallet() {
   if (over || shipping) return;
   const isFinal = !cur && !queue.length;
   if (!isFinal && !recs.length) { say('Pallet is empty'); return; }
+  const short = !isFinal && stackH < TARGET_H - 0.001;
+  if (short) { shortCnt++; say('Shipped short — under 10 ft'); }
   const group = new THREE.Group(); scene.add(group);
-  for (const r of recs) { world.removeBody(r.body); group.attach(r.mesh); }
+  for (const r of recs) if (!r.fallen) { world.removeBody(r.body); group.attach(r.mesh); }
   group.attach(palGroup);
-  recs = []; nodes = [];
+  recs = recs.filter(r => r.fallen); nodes = []; lastPlaced = null; undoLeft = 1;      // dropped boxes stay on the floor
   const newPal = makePallet(); newPal.position.x = -7; scene.add(newPal);
   if (!isFinal) palCnt++;
   shipping = { t: 0, group, newPal, isFinal };
@@ -608,6 +633,7 @@ function updateShipping(dt) {
   if (s.t > 1.5) {
     disposeMesh(s.group); palGroup = s.newPal; palGroup.position.x = 0; shipping = null;
     if (s.isFinal) endGame(); else canDropT = 0;
+    updateUI();
   }
 }
 function endGame() {
@@ -615,8 +641,9 @@ function endGame() {
   $('ftbl').innerHTML =
     `<span class="sl">Pallets used</span><span class="sv">${palCnt}</span>
      <span class="sl">Boxes dropped</span><span class="sv">${dropCnt}</span>
-     <span class="sl">Boxes crushed</span><span class="sv">${crushCnt}</span>`;
-  const dmg = dropCnt + crushCnt;
+     <span class="sl">Boxes crushed</span><span class="sv">${crushCnt}</span>
+     <span class="sl">Short pallets</span><span class="sv">${shortCnt}</span>`;
+  const dmg = dropCnt + crushCnt + shortCnt;
   $('frate').textContent =
     dmg === 0 && palCnt <= 2 ? '★★★  FLAWLESS' :
     dmg === 0                ? '★★  CLEAN LOAD' :
@@ -630,12 +657,13 @@ function updateUI() {
   const ce = $('sc'); ce.textContent = crushCnt; ce.className = 'sv2 ' + (crushCnt ? 'w' : 'g');
   $('sr').textContent = queue.length + (cur ? 1 : 0);
   $('bship').disabled = over || !!shipping;
+  const bu = $('bundo'); bu.disabled = over || !!shipping || !undoLeft || !lastPlaced; bu.textContent = '↶ Take back box (' + undoLeft + ')';
 
   const hand = $('hand');
   if (cur) {
     const t = TIERS[cur.tier], d = dimsFor(cur, curOri.vert, curOri.sw);
     hand.innerHTML = `<span class="tag" style="background:${t.css};color:#fff">${t.name}</span><br>
-      <b>${cur.kg} kg</b> · max load <b>${cur.strength} kg</b><br>${d.fw.toFixed(2)} × ${d.fd.toFixed(2)} × ${d.fh.toFixed(2)} m`;
+      <b>${cur.kg} kg</b> · ${cur.rigid ? '<b>rigid</b>, won\'t crush' : 'max load <b>' + cur.strength + ' kg</b>'}<br>${d.fw.toFixed(2)} × ${d.fd.toFixed(2)} × ${d.fh.toFixed(2)} m${curOri.yaw ? '<br>angle <b>' + Math.round(((curOri.yaw * 180 / Math.PI) % 180 + 180) % 180) + '°</b>' : ''}`;
   } else hand.textContent = 'All placed — ship it';
 
   const qe = $('qp'); qe.innerHTML = '';
@@ -645,10 +673,11 @@ function updateUI() {
     d.className = 'qb';
     const mx = Math.max(...b.dims);
     d.style.cssText = `width:${Math.round(60 + (mx - .3) / .45 * 78)}px;height:${Math.round(12 + b.dims[1] * 18)}px;background:#${c.fill.toString(16).padStart(6, '0')}`;
-    d.innerHTML = `<span>${b.kg}kg</span><span>${b.tier === 0 ? '⚠' : b.tier === 2 ? '■' : ''}</span>`;
+    d.innerHTML = `<span>${b.kg}kg</span><span>${b.rigid ? '■' : b.tier === 0 ? '⚠' : ''}</span>`;
     qe.appendChild(d);
   }
 }
+let stackH = 0;
 function statusTick() {
   let top = PAL_TOP, maxS = 0, tilt = false;
   for (const n of nodes) {
@@ -656,7 +685,10 @@ function statusTick() {
     const q = n.rec.body.quaternion;
     if (Math.acos(clamp(1 - 2 * (q.x * q.x + q.z * q.z), -1, 1)) > 0.28) tilt = true;
   }
-  const he = $('sh'); he.textContent = (top - PAL_TOP).toFixed(2) + '/' + MAX_H.toFixed(1) + 'm';
+  const he = $('sh'), ft = stackH * 3.281; he.textContent = ft.toFixed(1) + ' / 10 ft'; he.className = 'sv2 ' + (stackH >= TARGET_H ? 'g' : '');
+  const sc = $('ssh'); sc.textContent = shortCnt; sc.className = 'sv2 ' + (shortCnt ? 'w' : 'g');
+  const bs = $('bship'), lab = (!cur && !queue.length) ? 'Finish →' : stackH < TARGET_H ? 'Ship (short!) →' : 'Ship Pallet →';
+  if (bs.textContent !== lab) bs.textContent = lab;
   const se = $('ss'); se.textContent = Math.min(200, Math.round(maxS * 100)) + '%';
   se.className = 'sv2 ' + (maxS > 0.9 ? 'w' : maxS > 0.6 ? 'y' : 'g');
   const w = $('warn');
@@ -684,7 +716,7 @@ canvas.addEventListener('pointerup', e => {
   if (pdown && !dragging && pdown.btn === 0) { manual(); drop(); }
   pdown = null; dragging = false;
 });
-canvas.addEventListener('wheel', e => { cam.dist = clamp(cam.dist + e.deltaY * 0.003, 2.2, 6); e.preventDefault(); }, { passive: false });
+canvas.addEventListener('wheel', e => { cam.dist = clamp(cam.dist + e.deltaY * 0.004, 2.2, 10); e.preventDefault(); }, { passive: false });
 function setNdc(e) { const r = canvas.getBoundingClientRect(); ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); }
 
 const held = new Set();
@@ -692,8 +724,13 @@ addEventListener('keydown', e => {
   const k = e.key;
   if (k === ' ') { e.preventDefault(); manual(); drop(); }
   else if (k === 'r' || k === 'R') { e.preventDefault(); manual(); if (cur) { curOri.sw = !curOri.sw; updateUI(); } }
+  else if (k === 'z' || k === 'Z' || k === 'x' || k === 'X') {
+    e.preventDefault(); manual();
+    if (cur) { curOri.yaw += (k.toLowerCase() === 'z' ? 1 : -1) * Math.PI / 12; curOri.yaw = Math.round(curOri.yaw / (Math.PI / 12)) * (Math.PI / 12); updateUI(); }
+  }
   else if (k === 'f' || k === 'F') { e.preventDefault(); manual(); if (cur) { curOri.vert = (curOri.vert + 1) % 3; updateUI(); } }
   else if (k === 't' || k === 'T') setAI(!ai.on);
+  else if (k === 'u' || k === 'U' || k === 'Backspace') { e.preventDefault(); manual(); undo(); }
   else if (k.startsWith('Arrow')) {
     e.preventDefault(); manual();
     const fx = -Math.sin(cam.yaw), fz = -Math.cos(cam.yaw), rx = Math.cos(cam.yaw), rz = -Math.sin(cam.yaw);
@@ -708,6 +745,7 @@ addEventListener('keyup', e => held.delete(e.key.toLowerCase()));
 $('camL').onclick = () => cam.yaw += 0.35;
 $('camR').onclick = () => cam.yaw -= 0.35;
 $('bship').onclick = () => { manual(); shipPallet(); };
+$('bundo').onclick = () => { manual(); undo(); };
 $('bai').onclick = () => setAI(!ai.on);
 $('again').onclick = () => { setAI(false); startGame(); };
 $('againAi').onclick = () => { startGame(); setAI(true); };
@@ -724,19 +762,28 @@ function heightmap() {
     const b = n.bb;
     const x0 = Math.max(0, Math.floor((b.minX + PW / 2) / RES)), x1 = Math.min(NX - 1, Math.floor((b.maxX + PW / 2) / RES));
     const z0 = Math.max(0, Math.floor((b.minZ + PD / 2) / RES)), z1 = Math.min(NZ - 1, Math.floor((b.maxZ + PD / 2) / RES));
+    const q = n.rec.body.quaternion, yaw = 2 * Math.atan2(q.y, q.w), r = n.rec;
+    const turned = Math.abs(Math.sin(2 * yaw)) > 0.12;              // box is off-axis: use its real outline
+    const c = Math.cos(yaw), sn = Math.sin(yaw), cx = r.body.position.x, cz = r.body.position.z;
     for (let ix = x0; ix <= x1; ix++) for (let iz = z0; iz <= z1; iz++) {
       const i = ix * NZ + iz;
+      if (turned) {
+        const dx = -PW / 2 + (ix + .5) * RES - cx, dz = -PD / 2 + (iz + .5) * RES - cz;
+        const lx = dx * c - dz * sn, lz = dx * sn + dz * c;
+        if (Math.abs(lx) > r.w / 2 + RES * 0.4 || Math.abs(lz) > r.d / 2 + RES * 0.4) continue;
+      }
       if (b.maxY >= h[i]) { h[i] = b.maxY; own[i] = n; }
     }
   }
   return { h, own };
 }
 
-function planPlacement(spec) {
+function planPlacement(spec, minRatio = 0.75, allowTippy = false, comTol = 0.25) {
   const { h, own } = heightmap();
   const edgesX = new Set(), edgesZ = new Set();
   for (const n of nodes) { edgesX.add(n.bb.minX); edgesX.add(n.bb.maxX); edgesZ.add(n.bb.minZ); edgesZ.add(n.bb.maxZ); }
   let best = null;
+  const weak = 1 - clamp(spec.strength / 300, 0, 1);
 
   for (let vert = 0; vert < 3; vert++) for (let sw = 0; sw < 2; sw++) {
     const { fw, fd, fh } = dimsFor(spec, vert, !!sw);
@@ -749,6 +796,7 @@ function planPlacement(spec) {
     for (const e of edgesX) { xs.add(e + fw / 2 + 0.003); xs.add(e - fw / 2 - 0.003); }
     for (const e of edgesZ) { zs.add(e + fd / 2 + 0.003); zs.add(e - fd / 2 - 0.003); }
     const tippy = fh > 1.4 * Math.min(fw, fd);
+    if (tippy && !allowTippy) continue;                    // don't stand a box on a narrow end unless desperate
 
     for (const x of xs) {
       if (x < xMin - 1e-6 || x > xMax + 1e-6) continue;
@@ -770,11 +818,11 @@ function planPlacement(spec) {
           }
         }
         const ratio = sup / tot;
-        if (ratio < 0.75) continue;
+        if (ratio < minRatio) continue;
         const onTop = L > PAL_TOP + 0.01;
         if (onTop) {
           if (x < bx0 || x > bx1 || z < bz0 || z > bz1) continue;
-          if (Math.hypot(sx / sup - x, sz / sup - z) > 0.25 * Math.min(fw, fd)) continue;
+          if (Math.hypot(sx / sup - x, sz / sup - z) > comTol * Math.min(fw, fd)) continue;
           // strength check — push the new weight down through the stack
           const extra = new Map();
           for (const [n, c] of owners) extra.set(n, spec.kg * c / sup);
@@ -787,14 +835,15 @@ function planPlacement(spec) {
           if (!ok) continue;
         }
         // neighbour contact: walls / taller boxes hugging the footprint
-        let ring = 0, touch = 0;
-        for (let ix = ix0; ix <= ix1; ix++) for (const iz of [iz0 - 1, iz1 + 1]) { ring++; if (iz < 0 || iz >= NZ || h[ix * NZ + iz] >= L + 0.4 * fh) touch++; }
-        for (let iz = iz0; iz <= iz1; iz++) for (const ix of [ix0 - 1, ix1 + 1]) { ring++; if (ix < 0 || ix >= NX || h[ix * NZ + iz] >= L + 0.4 * fh) touch++; }
+        let ring = 0, touch = 0, flush = 0, exposed = 0;
+        for (let ix = ix0; ix <= ix1; ix++) for (const iz of [iz0 - 1, iz1 + 1]) { ring++; if (iz < 0 || iz >= NZ || h[ix * NZ + iz] >= L + 0.4 * fh) touch++; if (iz >= 0 && iz < NZ && Math.abs(h[ix * NZ + iz] - (L + fh)) < 0.03) flush++; if (iz >= 0 && iz < NZ && h[ix * NZ + iz] < L - 0.15) exposed++; }
+        for (let iz = iz0; iz <= iz1; iz++) for (const ix of [ix0 - 1, ix1 + 1]) { ring++; if (ix < 0 || ix >= NX || h[ix * NZ + iz] >= L + 0.4 * fh) touch++; if (ix >= 0 && ix < NX && Math.abs(h[ix * NZ + iz] - (L + fh)) < 0.03) flush++; if (ix >= 0 && ix < NX && h[ix * NZ + iz] < L - 0.15) exposed++; }
         const hRel = L - PAL_TOP;
         let void_ = 0;                                              // empty space left under the box
         for (let ix = ix0; ix <= ix1; ix++) for (let iz = iz0; iz <= iz1; iz++) void_ += L - h[ix * NZ + iz];
         void_ *= RES * RES;
-        const score = (hRel + fh) * 7 + hRel * (spec.kg / 12) * 3 + void_ / (fw * fd * fh) * 5 - (touch / ring) * 4 + (tippy ? 2.5 : 0);
+        const score = (hRel + fh) * 7 + hRel * (spec.kg / 12) * 3 + void_ / (fw * fd * fh) * 5 - (touch / ring) * 4 - (flush / ring) * 5 + (exposed / ring) * 8 + (tippy ? 2.5 : 0)
+          + weak * (fw * fd / 0.2) * clamp(1 - hRel / 1.5, 0, 1) * 5;   // keep weak boxes out of the load-bearing layers
         if (!best || score < best.score) best = { score, vert, sw: !!sw, x, z };
       }
     }
@@ -822,9 +871,11 @@ function aiTick(dt) {
   if (ai.phase === 'idle') {
     if (canDropT > 0 || ai.t < 0.25 || !isSettled()) return;
     if (!cur) { shipPallet(); return; }
-    const plan = planPlacement(cur);
+    if (stackH >= TARGET_H + 0.15) { shipPallet(); return; }          // tall enough — send it out before it gets wobbly
+    let plan = planPlacement(cur);
+    if (!plan && stackH < TARGET_H) plan = planPlacement(cur, 0.55, false, 0.18) || planPlacement(cur, 0.75, true) || planPlacement(cur, 0.5, true, 0.15);
     if (!plan) { shipPallet(); return; }
-    curOri.vert = plan.vert; curOri.sw = plan.sw; updateUI();
+    curOri.vert = plan.vert; curOri.sw = plan.sw; curOri.yaw = 0; updateUI();
     ai.plan = plan; ai.from = { x: ghost.x, z: ghost.z }; ai.phase = 'move'; ai.t = 0;
   } else if (ai.phase === 'move') {
     const k = clamp(ai.t / 0.45, 0, 1), e = k * k * (3 - 2 * k);
@@ -844,7 +895,7 @@ const ghostMat = new THREE.MeshStandardMaterial({ color: 0xf0b42a, transparent: 
 const ghostMesh = new THREE.Mesh(boxGeo, ghostMat);
 const ghostEdges = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({ color: 0xffffff })); ghostMesh.add(ghostEdges);
 const footMat = new THREE.MeshBasicMaterial({ color: 0xf0b42a, transparent: true, opacity: 0.4, depthWrite: false });
-const footMesh = new THREE.Mesh(planeGeo, footMat); footMesh.rotation.x = -Math.PI / 2;
+const footMesh = new THREE.Mesh(planeGeo, footMat); footMesh.rotation.order = 'YXZ'; footMesh.rotation.x = -Math.PI / 2;
 scene.add(ghostMesh, footMesh);
 
 function refreshGhost() {
@@ -852,7 +903,8 @@ function refreshGhost() {
   const { fw, fd, fh } = dimsFor(cur, curOri.vert, curOri.sw);
   ghost.fw = fw; ghost.fd = fd; ghost.fh = fh;
   ghost.x = clamp(ghost.x, -PW / 2, PW / 2); ghost.z = clamp(ghost.z, -PD / 2, PD / 2);
-  const top = stackTop(ghost.x, ghost.z, fw, fd);
+  const [efw, efd] = footprint(fw, fd, curOri.yaw);
+  const top = stackTop(ghost.x, ghost.z, efw, efd);
   ghost.y = top + fh / 2 + 0.03;
   ghost.fits = top + fh - PAL_TOP <= MAX_H + 1e-6;
   ghost.top = top;
@@ -872,8 +924,8 @@ function updateGhost() {
   footMat.color.set(ok ? 0xf0b42a : 0xd44c3a);
   ghostMesh.visible = footMesh.visible = true;
   ghostMat.opacity = canDropT > 0 ? 0.2 : 0.55;
-  ghostMesh.position.set(ghost.x, ghost.y, ghost.z); ghostMesh.scale.set(ghost.fw, ghost.fh, ghost.fd);
-  footMesh.position.set(ghost.x, ghost.top + 0.004, ghost.z); footMesh.scale.set(ghost.fw, ghost.fd, 1);
+  ghostMesh.position.set(ghost.x, ghost.y, ghost.z); ghostMesh.scale.set(ghost.fw, ghost.fh, ghost.fd); ghostMesh.rotation.y = curOri.yaw;
+  footMesh.position.set(ghost.x, ghost.top + 0.004, ghost.z); footMesh.scale.set(ghost.fw, ghost.fd, 1); footMesh.rotation.y = curOri.yaw;
 }
 
 // ── Main loop ──────────────────────────────────────────────────────────────
@@ -887,6 +939,7 @@ function update(dt) {
     while (accum >= FIXED && steps++ < 40) { world.step(FIXED); accum -= FIXED; }
     if (accum > FIXED) accum = 0;
     nodes = analyze();
+    stackH = nodes.reduce((m, n) => Math.max(m, n.bb.maxY - PAL_TOP), 0);
     crushTick(sdt); fallTick();
     canDropT = Math.max(0, canDropT - sdt);
     if (ai.on) aiTick(sdt);
@@ -906,9 +959,15 @@ function render(dt) {
     for (const m of r.mats) m.emissiveIntensity = e;
   }
   updateGhost();
-  camera.position.set(camTarget.x + Math.sin(cam.yaw) * Math.cos(cam.pitch) * cam.dist,
-                      camTarget.y + Math.sin(cam.pitch) * cam.dist,
-                      camTarget.z + Math.cos(cam.yaw) * Math.cos(cam.pitch) * cam.dist);
+  // frame the stack: look at its middle and back off as it grows
+  const k = Math.min(1, dt * 2.5), top = Math.max(stackH, ghost.top ? ghost.top - PAL_TOP + ghost.fh : 0);
+  camTarget.y += (PAL_TOP + clamp(0.4 + top * 0.4, 0.4, 3.4) - camTarget.y) * k;
+  cam.extra += (top * 0.85 - cam.extra) * k;
+  const D = cam.dist + cam.extra;
+  camera.position.set(camTarget.x + Math.sin(cam.yaw) * Math.cos(cam.pitch) * D,
+                      camTarget.y + Math.sin(cam.pitch) * D,
+                      camTarget.z + Math.cos(cam.yaw) * Math.cos(cam.pitch) * D);
+  sun.target.position.set(0, camTarget.y, 0); sun.position.set(2.2, camTarget.y + 4.2, 2.6);
   camera.lookAt(camTarget);
   renderer.render(scene, camera);
   statusTick();
@@ -930,7 +989,7 @@ startGame(); resize(); requestAnimationFrame(frame);
 
 // test hook
 window.__pl = {
-  get recs() { return recs; }, get state() { return { palCnt, dropCnt, crushCnt, over, remaining: queue.length + (cur ? 1 : 0), shipping: !!shipping }; },
+  get recs() { return recs; }, get state() { return { palCnt, dropCnt, crushCnt, shortCnt, over, remaining: queue.length + (cur ? 1 : 0), shipping: !!shipping }; },
   startGame, setAI, setSpeed: s => ai.speed = s,
   sim(sec) { for (let t = 0; t < sec; t += 1 / 60) update(1 / 60); },
   forceCur: o => { if (cur) Object.assign(cur, o); },
