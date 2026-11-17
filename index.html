@@ -139,6 +139,13 @@ body {
 .inst { font-size: 10px; line-height: 1.85; color: var(--muted); }
 .inst kbd { background: var(--surf2); border: 1px solid var(--bord); padding: 0 4px; font-family: inherit; font-size: 9px; }
 
+.opt { display: flex; align-items: center; gap: 12px; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: #7a7265; }
+.opt > span { width: 64px; text-align: right; }
+.seg { display: flex; gap: 4px; }
+.seg button { padding: 7px 10px; font-family: inherit; font-size: 10px; letter-spacing: 1px; background: transparent; color: #dedad1; border: 1px solid #46403a; cursor: pointer; }
+.seg button.sel { color: var(--y); border-color: var(--y); }
+.sub { font-size: 10px; color: #7a7265; text-align: center; line-height: 1.7; max-width: 300px; }
+#holdblk { cursor: pointer; }
 @media (max-width: 600px) {
   .wrap { flex-direction: column; align-items: center; padding: 0 12px; }
   .cvs-wrap { width: 100%; max-width: 500px; }
@@ -165,7 +172,7 @@ body {
     <canvas id="c"></canvas>
     <div class="msg" id="msg"></div>
     <div class="warn" id="warn" hidden></div>
-    <div class="camb"><button id="camL" title="Rotate view (Q)">⟲</button><button id="camR" title="Rotate view (E)">⟳</button></div>
+    <div class="camb"><button id="camL" title="Rotate view (Q)">⟲</button><button id="camR" title="Rotate view (E)">⟳</button><button id="mute" title="Sound on/off">🔊</button></div>
     <div class="over" id="over" hidden>
       <div class="over-ttl">Truck Cleared</div>
       <div class="score-tbl" id="ftbl"></div>
@@ -173,6 +180,18 @@ body {
       <div class="row">
         <button class="btn-play" id="again">Play Again</button>
         <button class="btn-play alt" id="againAi">🤖 Watch Computer</button>
+        <button class="btn-play alt" id="toMenu">Menu</button>
+      </div>
+    </div>
+    <div class="over" id="start" hidden>
+      <div class="over-ttl">Pallet Loader 3D</div>
+      <div class="sub">Cartons arrive in layers. Fit each layer together, build past 10 ft, ship it. Perfect layers in a row multiply your score.</div>
+      <div class="opt"><span>Length</span><div class="seg" id="optLen"><button data-v="quick">Quick</button><button data-v="standard">Standard</button><button data-v="marathon">Marathon</button></div></div>
+      <div class="opt"><span>Boxes</span><div class="seg" id="optTough"><button data-v="tough">Tough</button><button data-v="normal">Normal</button><button data-v="delicate">Delicate</button></div></div>
+      <div class="sub" id="startBest"></div>
+      <div class="row">
+        <button class="btn-play" id="go">Play</button>
+        <button class="btn-play alt" id="goAi">🤖 Watch Computer</button>
       </div>
     </div>
   </div>
@@ -180,6 +199,7 @@ body {
   <div class="panel">
     <div class="pblk">
       <div class="plbl">Status</div>
+      <div class="srow"><span class="sn">Score</span><span class="sv2 y" id="sscore">0</span></div>
       <div class="srow"><span class="sn">Pallets</span><span class="sv2" id="sp">1</span></div>
       <div class="srow"><span class="sn">Dropped</span><span class="sv2 g" id="sd">0</span></div>
       <div class="srow"><span class="sn">Crushed</span><span class="sv2 g" id="sc">0</span></div>
@@ -205,6 +225,11 @@ body {
       <div class="hand" id="hand">—</div>
     </div>
 
+    <div class="pblk" id="holdblk" title="Swap the box in hand with the held box">
+      <div class="plbl">Hold · H</div>
+      <div class="hand" id="holdv">empty</div>
+    </div>
+
     <div class="pblk">
       <div class="plbl">Up Next</div>
       <div class="qprev" id="qp"></div>
@@ -219,7 +244,7 @@ body {
         <kbd>←→↑↓</kbd> nudge<br>
         <kbd>Q</kbd><kbd>E</kbd> / drag to orbit<br>
         Scroll to zoom<br><br>
-        Cartons arrive as full<br>layers — fit them like a<br>puzzle. Some <b>squish</b> under<br>load and get a little crushed<br>past MAX LOAD. Rigid ones<br>never do. Build every pallet<br>over <b>10 ft</b> before shipping.<br><kbd>U</kbd> takes back one box.<br><kbd>G</kbd> shows where it fits.<br>Boxes snap flush; hold <kbd>Shift</kbd><br>to place freely.
+        Cartons arrive as full<br>layers — fit them like a<br>puzzle. Some <b>squish</b> under<br>load and get a little crushed<br>past MAX LOAD. Rigid ones<br>never do. Build every pallet<br>over <b>10 ft</b> before shipping.<br><kbd>U</kbd> takes back one box.<br><kbd>G</kbd> shows where it fits.<br><kbd>H</kbd> holds a box for later.<br>Boxes snap flush; hold <kbd>Shift</kbd><br>to place freely.
       </div>
     </div>
   </div>
@@ -239,7 +264,11 @@ const PW = 12 * U, PD = 10 * U;    // standard 48 × 40 in pallet (x, z)
 const lb = kg => Math.round(kg * 2.2046), inch = m => Math.round(m * 39.37);
 const PAL_TOP = 0.15;              // deck surface height
 const MAX_H = 5.2;                 // load height limit above the deck
-const TOTAL = 100;                // about three pallets' worth of big cartons
+const LENGTHS = { quick: 40, standard: 100, marathon: 200 };          // cartons per game
+const TOUGH = { tough: 1.6, normal: 1, delicate: 0.4 };               // multiplier on every MAX LOAD
+const mode = { len: 'standard', tough: 'normal' };
+try { Object.assign(mode, JSON.parse(localStorage.getItem('pl3d.mode') || '{}')); } catch (e) {}
+if (!LENGTHS[mode.len]) mode.len = 'standard'; if (!TOUGH[mode.tough]) mode.tough = 'normal';
 const PH = { lin: 0.2, ang: 0.7 };                // body damping (tunable)
 const W = { top: 20, corner: 0.5, dead: 6, touch: 4, flush: 6, exposed: 12, void: 5, heavy: 3 };   // computer player's scoring weights
 const TARGET_H = 3.048;           // every shipped pallet should stand at least 10 ft
@@ -393,7 +422,7 @@ function genLayer() {
   return pieces.map((q, i) => {
     const x0 = flip ? 12 - q.x0 - q.w : q.x0, z0 = flip ? 10 - q.z0 - q.d : q.z0;
     const spec = makeSpec([q.w * U, h, q.d * U]);
-    spec.slot = { x: (x0 + q.w / 2) * U - PW / 2, z: (z0 + q.d / 2) * U - PD / 2 }; spec.first = i === 0;
+    spec.slot = { x: (x0 + q.w / 2) * U - PW / 2, z: (z0 + q.d / 2) * U - PD / 2 }; spec.first = i === 0; spec.layer = layerNo;
     return spec;
   });
 }
@@ -401,10 +430,10 @@ function makeSpec(dims) {
   const tier = Math.random() < 0.70 ? 1 : 2;                         // no fragile boxes
   const kg = Math.max(3, Math.round(dims[0] * dims[1] * dims[2] * R(110, 250)));
   const rigid = tier === 2 || Math.random() < 0.5;                   // rigid boxes never squish or crush
-  const strength = rigid ? 1e6 : Math.round(R(TIERS[tier].lo, TIERS[tier].hi));
+  const strength = rigid ? 1e6 : Math.round(R(TIERS[tier].lo, TIERS[tier].hi) * TOUGH[mode.tough]);
   return { dims, kg, tier, strength, rigid, home: 1, colorIdx: Math.floor(Math.random() * BOX_PALETTE.length) };
 }
-function genQueue() { const q = []; while (q.length < TOTAL) q.push(...genLayer()); return q; }
+function genQueue() { const q = []; while (q.length < LENGTHS[mode.len]) q.push(...genLayer()); return q; }
 const defaultVert = spec => spec.home ?? spec.dims.indexOf(Math.min(...spec.dims));   // widest face down
 function dimsFor(spec, vert, sw) {
   const rest = [0, 1, 2].filter(i => i !== vert).map(i => spec.dims[i]);
@@ -417,6 +446,7 @@ let world, accum = 0;
 let queue = [], cur = null, curOri = { vert: 0, sw: false, yaw: 0 };
 let recs = [], nodes = [];
 let palCnt = 1, dropCnt = 0, crushCnt = 0, shortCnt = 0, undoLeft = 1, lastPlaced = null;
+let score = 0, streak = 0, usedAI = false, pendingLayer = null, pendingT = 0, stash = null, canStash = true, menuOpen = false;
 let over = false, canDropT = 0, shipping = null, simTime = 0;
 const ghost = { x: 0, z: 0, y: 0, fw: .5, fd: .4, fh: .2, fits: true };
 const ndc = new THREE.Vector2(0, 0);
@@ -446,10 +476,11 @@ function startGame() {
 
   queue = genQueue();
   cur = queue.shift(); curOri = { vert: defaultVert(cur), sw: false, yaw: 0 };
+  score = 0; streak = 0; usedAI = ai.on; pendingLayer = null; stash = null; canStash = true;
   packLog.length = 0; palCnt = 1; dropCnt = 0; crushCnt = 0; shortCnt = 0; undoLeft = 1; lastPlaced = null; over = false; canDropT = 0; accum = 0;
   nudge = { x: 0, z: 0 };
   ai.phase = 'idle'; ai.t = 0; ai.plan = null;
-  $('over').hidden = true;
+  $('over').hidden = true; $('start').hidden = true; menuOpen = false;
   updateUI();
 }
 
@@ -569,7 +600,7 @@ function crushTick(dt) {
   }
 }
 function crush(r) {
-  r.crushed = true; crushCnt++;
+  r.crushed = true; crushCnt++; score -= 30; sfx.crush();
   setPhysHeight(r, r.h0 * CRUSH_F);
   for (const m of r.mats) m.color.multiplyScalar(0.8);
   say('📦 Crushed a little');
@@ -578,7 +609,7 @@ function crush(r) {
 function fallTick() {
   for (const r of recs) {
     if (!r.fallen && aabbOf(r).minY < PAL_TOP - 0.04) {      // bottom is below the deck: it's on the floor
-      r.fallen = true; dropCnt++; updateUI();
+      r.fallen = true; dropCnt++; score -= 50; sfx.fall(); updateUI();
     }
   }
 }
@@ -603,29 +634,86 @@ function updateDebris(dt) {
     d.life -= dt; if (d.life <= 0) { scene.remove(d.m); debris.splice(i, 1); }
   }
 }
+// ── Sound ──────────────────────────────────────────────────────────────────
+let actx = null, muted = false;
+try { muted = localStorage.getItem('pl3d.muted') === '1'; } catch (e) {}
+function unlockAudio() {
+  if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
+  try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+}
+function tone(f0, f1, dur, type = 'sine', vol = 0.08, delay = 0) {
+  if (!actx || muted) return;
+  const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime + delay;
+  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur + 0.02);
+}
+function noise(dur, vol, cutoff) {
+  if (!actx || muted) return;
+  const n = Math.floor(actx.sampleRate * dur), buf = actx.createBuffer(1, n, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+  const src = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
+  f.type = 'lowpass'; f.frequency.value = cutoff; g.gain.value = vol;
+  src.buffer = buf; src.connect(f).connect(g).connect(actx.destination); src.start();
+}
+const sfx = {
+  place: () => { noise(0.09, 0.18, 380); tone(120, 60, 0.12, 'sine', 0.12); },
+  crush: () => noise(0.35, 0.3, 1100),
+  fall: () => tone(320, 60, 0.45, 'sawtooth', 0.05),
+  ship: () => { tone(90, 150, 0.6, 'sawtooth', 0.04); noise(0.5, 0.06, 500); },
+  hold: () => tone(660, 880, 0.06, 'triangle', 0.05),
+  perfect: n => [1, 1.26, 1.5, 2].forEach((m, i) => tone(392 * Math.pow(1.059, Math.min(n - 1, 12)) * m, 392 * m, 0.22, 'triangle', 0.07, i * 0.07)),
+  win: () => [523, 659, 784, 1046, 1318].forEach((f, i) => tone(f, f, 0.3, 'triangle', 0.07, i * 0.12)),
+};
+
 let msgT = 0;
 function say(t) { const e = $('msg'); e.textContent = t; e.style.opacity = 1; clearTimeout(msgT); msgT = setTimeout(() => e.style.opacity = 0, 1100); }
 
 // ── Actions ────────────────────────────────────────────────────────────────
 function drop() {
-  if (over || shipping || !cur || canDropT > 0) return false;
+  if (over || shipping || menuOpen || !cur || canDropT > 0) return false;
   if (!ghost.fits) { say('Too tall — ship it'); return false; }
   const { fw, fd, fh } = dimsFor(cur, curOri.vert, curOri.sw);
   const [efw, efd] = footprint(fw, fd, curOri.yaw);
   const y = stackTop(ghost.x, ghost.z, efw, efd) + fh / 2 + 0.03;
   lastPlaced = addBox(cur, fw, fd, fh, ghost.x, y, ghost.z, curOri.yaw);
   cur = queue.shift() || null;
+  if (!cur && stash) { cur = stash; stash = null; }
   if (cur) curOri = { vert: defaultVert(cur), sw: false, yaw: 0 };
-  canDropT = 0.3; nudge = { x: 0, z: 0 };
+  canDropT = 0.3; nudge = { x: 0, z: 0 }; canStash = true;
+  score += 10; sfx.place();
+  const lid = lastPlaced.spec.layer;                               // was that the last carton of its layer?
+  if (lid !== undefined && ![cur, stash, ...queue].some(q => q && q.layer === lid)) { pendingLayer = lid; pendingT = 0; }
   updateUI();
   return true;
 }
 
+// Hold: set the box in hand aside and take the next one (or swap with the held box). Once per placement.
+function hold() {
+  if (over || shipping || menuOpen || !cur || !canStash) return;
+  if (!stash && !queue.length) return;
+  const c = cur; cur = stash || queue.shift(); stash = c; canStash = false;
+  curOri = { vert: defaultVert(cur), sw: false, yaw: 0 }; nudge = { x: 0, z: 0 };
+  sfx.hold(); updateUI();
+}
+
+// A layer is perfect when every carton up to it is down and the top is one flat, fully covered surface.
+function checkLayer(lid) {
+  const { h } = heightmap(lid);
+  let mn = 1e9, mx = -1e9; for (const v of h) { if (v < mn) mn = v; if (v > mx) mx = v; }
+  if (mn > PAL_TOP + 0.05 && mx - mn < 0.035) {
+    streak++; const pts = 100 * streak; score += pts;
+    say('Perfect layer ×' + streak + '  +' + pts); sfx.perfect(streak);
+  } else streak = 0;
+  updateUI();
+}
+
 function undo() {
-  if (over || shipping || !undoLeft || !lastPlaced || !recs.includes(lastPlaced)) return;
+  if (over || shipping || menuOpen || !undoLeft || !lastPlaced || !recs.includes(lastPlaced)) return;
   const r = lastPlaced;
   world.removeBody(r.body); disposeMesh(r.mesh); recs.splice(recs.indexOf(r), 1);
-  if (r.fallen) dropCnt--;
+  if (r.fallen) { dropCnt--; score += 50; }
+  score -= 10; pendingLayer = null;
   if (cur) queue.unshift(cur);
   cur = r.spec; curOri = { vert: defaultVert(cur), sw: false, yaw: 0 };
   lastPlaced = null; undoLeft--; canDropT = 0; nudge = { x: 0, z: 0 };
@@ -634,12 +722,14 @@ function undo() {
 }
 
 function shipPallet() {
-  if (over || shipping) return;
+  if (over || shipping || menuOpen) return;
   const isFinal = !cur && !queue.length;
   if (!isFinal && !recs.length) { say('Pallet is empty'); return; }
   if (stackH > 0.9) packLog.push({ fill: packFill(), n: recs.filter(r => !r.fallen).length, ft: stackH * 3.281 });
   const short = !isFinal && stackH < TARGET_H - 0.001;
-  if (short) { shortCnt++; say('Shipped short — under 10 ft'); }
+  if (short) { shortCnt++; score -= 150; say('Shipped short — under 10 ft'); }
+  else if (stackH > 0.9) { const b = Math.round(packFill() * 200); score += b; if (!isFinal) say('Shipped  +' + b); }
+  pendingLayer = null; sfx.ship();
   const group = new THREE.Group(); scene.add(group);
   for (const r of recs) if (!r.fallen) { world.removeBody(r.body); group.attach(r.mesh); }
   group.attach(palGroup);
@@ -662,10 +752,16 @@ function updateShipping(dt) {
   }
 }
 function endGame() {
-  over = true;
+  over = true; sfx.win();
+  const key = 'pl3d.best.' + mode.len + '.' + mode.tough;
+  let best = 0, isBest = false;
+  try { best = +localStorage.getItem(key) || 0; } catch (e) {}
+  if (!usedAI && score > best) { best = score; isBest = true; try { localStorage.setItem(key, String(score)); } catch (e) {} }
   const avgPack = packLog.length ? Math.round(100 * packLog.reduce((a, p) => a + p.fill, 0) / packLog.length) : 0; $('over').hidden = false;
   $('ftbl').innerHTML =
-    `<span class="sl">Pallets used</span><span class="sv">${palCnt}</span>
+    `<span class="sl">Score</span><span class="sv">${score}${isBest ? '  ★ new best' : ''}</span>
+     <span class="sl">${usedAI ? 'Your best' : 'Best'}</span><span class="sv">${best || '—'}</span>
+     <span class="sl">Pallets used</span><span class="sv">${palCnt}</span>
      <span class="sl">Boxes dropped</span><span class="sv">${dropCnt}</span>
      <span class="sl">Boxes crushed</span><span class="sv">${crushCnt}</span>
      <span class="sl">Short pallets</span><span class="sv">${shortCnt}</span>
@@ -682,7 +778,9 @@ function updateUI() {
   $('sp').textContent = palCnt;
   const de = $('sd'); de.textContent = dropCnt; de.className = 'sv2 ' + (dropCnt ? 'w' : 'g');
   const ce = $('sc'); ce.textContent = crushCnt; ce.className = 'sv2 ' + (crushCnt ? 'w' : 'g');
-  $('sr').textContent = queue.length + (cur ? 1 : 0);
+  $('sr').textContent = queue.length + (cur ? 1 : 0) + (stash ? 1 : 0);
+  $('sscore').textContent = score + (streak > 1 ? '  ×' + streak : '');
+  $('holdv').innerHTML = stash ? `<b>${lb(stash.kg)} lb</b> · ${inch(stash.dims[0])} × ${inch(stash.dims[2])} × ${inch(stash.dims[1])} in` : 'empty';
   $('bship').disabled = over || !!shipping;
   const bu = $('bundo'); bu.disabled = over || !!shipping || !undoLeft || !lastPlaced; bu.textContent = '↶ Take back box (' + undoLeft + ')';
 
@@ -736,7 +834,7 @@ function manual() { if (ai.on) setAI(false); }
 const ray = new THREE.Raycaster(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit = new THREE.Vector3();
 let pdown = null, dragging = false;
 canvas.addEventListener('contextmenu', e => e.preventDefault());
-canvas.addEventListener('pointerdown', e => { pdown = { x: e.clientX, y: e.clientY, btn: e.button, touch: e.pointerType === 'touch' }; dragging = false; canvas.setPointerCapture(e.pointerId); setNdc(e); });
+canvas.addEventListener('pointerdown', e => { unlockAudio(); pdown = { x: e.clientX, y: e.clientY, btn: e.button, touch: e.pointerType === 'touch' }; dragging = false; canvas.setPointerCapture(e.pointerId); setNdc(e); });
 canvas.addEventListener('pointermove', e => {
   if (pdown && !pdown.touch && (e.buttons & 3) && (dragging || Math.hypot(e.clientX - pdown.x, e.clientY - pdown.y) > 6)) {
     dragging = true;
@@ -755,7 +853,8 @@ function setNdc(e) { const r = canvas.getBoundingClientRect(); ndc.set(((e.clien
 
 const held = new Set();
 addEventListener('keydown', e => {
-  const k = e.key;
+  const k = e.key; unlockAudio();
+  if (menuOpen) return;
   if (k === ' ') { e.preventDefault(); manual(); drop(); }
   else if (k === 'r' || k === 'R') { e.preventDefault(); manual(); if (cur) { curOri.sw = !curOri.sw; updateUI(); } }
   else if (k === 'z' || k === 'Z' || k === 'x' || k === 'X') {
@@ -764,6 +863,8 @@ addEventListener('keydown', e => {
   }
   else if (k === 'f' || k === 'F') { e.preventDefault(); manual(); if (cur) { curOri.vert = (curOri.vert + 1) % 3; updateUI(); } }
   else if (k === 't' || k === 'T') setAI(!ai.on);
+  else if (k === 'h' || k === 'H') { manual(); hold(); }
+  else if (k === 'm' || k === 'M') toggleMute();
   else if (k === 'g' || k === 'G') { guideOn = !guideOn; $('bguide').classList.toggle('on', guideOn); }
   else if (k === 'u' || k === 'U' || k === 'Backspace') { e.preventDefault(); manual(); undo(); }
   else if (k.startsWith('Arrow')) {
@@ -784,6 +885,23 @@ $('bundo').onclick = () => { manual(); undo(); };
 $('bguide').onclick = () => { guideOn = !guideOn; $('bguide').classList.toggle('on', guideOn); };
 $('bai').onclick = () => setAI(!ai.on);
 $('again').onclick = () => { setAI(false); startGame(); };
+$('toMenu').onclick = () => { setAI(false); startGame(); showMenu(); };
+$('go').onclick = () => { unlockAudio(); setAI(false); startGame(); };
+$('goAi').onclick = () => { unlockAudio(); startGame(); setAI(true); };
+$('holdblk').onclick = () => { manual(); hold(); };
+$('mute').onclick = () => toggleMute();
+function toggleMute() { muted = !muted; $('mute').textContent = muted ? '🔇' : '🔊'; try { localStorage.setItem('pl3d.muted', muted ? '1' : '0'); } catch (e) {} unlockAudio(); }
+function showMenu() {
+  menuOpen = true; $('start').hidden = false; $('over').hidden = true;
+  for (const [id, k] of [['optLen', 'len'], ['optTough', 'tough']]) for (const b of $(id).children) b.classList.toggle('sel', b.dataset.v === mode[k]);
+  let best = 0; try { best = +localStorage.getItem('pl3d.best.' + mode.len + '.' + mode.tough) || 0; } catch (e) {}
+  $('startBest').textContent = LENGTHS[mode.len] + ' cartons · ' + (mode.tough === 'delicate' ? 'boxes crush easily — keep heavy loads off them' : mode.tough === 'tough' ? 'boxes rarely crush' : 'boxes crush if badly overloaded') + (best ? ' · best ' + best : '');
+}
+for (const [id, k] of [['optLen', 'len'], ['optTough', 'tough']]) $(id).addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  mode[k] = b.dataset.v; try { localStorage.setItem('pl3d.mode', JSON.stringify(mode)); } catch (e) {}
+  startGame(); showMenu();                                           // rebuild the queue for the new mode
+});
 $('againAi').onclick = () => { startGame(); setAI(true); };
 $('spd').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -792,9 +910,10 @@ $('spd').addEventListener('click', e => {
 
 // ── Computer player ────────────────────────────────────────────────────────
 const RES = U / 2, NX = Math.round(PW / RES), NZ = Math.round(PD / RES);
-function heightmap() {
+function heightmap(maxLayer = Infinity) {
   const h = new Float32Array(NX * NZ).fill(PAL_TOP), own = new Array(NX * NZ).fill(null);
   for (const n of nodes) {
+    if (n.rec.spec.layer > maxLayer) continue;
     const b = n.bb;
     const E = 0.012;                                            // boxes that merely touch don't share a cell
     const x0 = Math.max(0, Math.floor((b.minX + E + PW / 2) / RES)), x1 = Math.min(NX - 1, Math.floor((b.maxX - E + PW / 2) / RES));
@@ -913,6 +1032,7 @@ function isSettled() {
 
 function setAI(on) {
   ai.on = on; ai.phase = 'idle'; ai.t = 0; ai.plan = null;
+  if (on) { usedAI = true; if (menuOpen) { $('start').hidden = true; menuOpen = false; } }
   $('bai').classList.toggle('on', on);
   $('bai').textContent = on ? '⏹ Stop computer' : '🤖 Computer plays';
   if (on && over) startGame();
@@ -1009,7 +1129,7 @@ function update(dt) {
   const mult = ai.on ? ai.speed : 1, sdt = dt * mult;
   simTime += sdt;
   if (shipping) updateShipping(dt * Math.max(1, mult * 0.5));
-  if (!over) {
+  if (!over && !menuOpen) {
     accum += sdt;
     let steps = 0;
     while (accum >= FIXED && steps++ < 40) { world.step(FIXED); accum -= FIXED; }
@@ -1018,6 +1138,7 @@ function update(dt) {
     stackH = nodes.reduce((m, n) => Math.max(m, n.bb.maxY - PAL_TOP), 0);
     crushTick(sdt); fallTick();
     canDropT = Math.max(0, canDropT - sdt);
+    if (pendingLayer !== null && !shipping) { pendingT += sdt; if (pendingT > 0.4 && (isSettled() || pendingT > 2.5)) { const l = pendingLayer; pendingLayer = null; checkLayer(l); } }
     if (ai.on) aiTick(sdt);
   }
   if (held.has('q')) cam.yaw += dt * 1.8;
@@ -1061,18 +1182,18 @@ function frame(now) {
   update(dt); render(dt);
 }
 
-startGame(); resize(); requestAnimationFrame(frame);
+startGame(); showMenu(); $('mute').textContent = muted ? '🔇' : '🔊'; resize(); requestAnimationFrame(frame);
 
 // test hook
 window.__pl = {
-  get recs() { return recs; }, get state() { return { palCnt, dropCnt, crushCnt, shortCnt, over, remaining: queue.length + (cur ? 1 : 0), shipping: !!shipping }; },
+  get recs() { return recs; }, get state() { return { score, streak, palCnt, dropCnt, crushCnt, shortCnt, over, remaining: queue.length + (cur ? 1 : 0), shipping: !!shipping }; },
   cam, get stackH() { return stackH; }, packLog,
   tune(o) { Object.assign(W, o); return { ...W }; },
   phys(o) { Object.assign(PH, o); return { ...PH }; },
   planCur() { if (!cur) return null; const p = planPlacement(cur); if (!p) return null; const d = dimsFor(cur, p.vert, p.sw); return { ...p, ...d, dims: cur.dims }; },
   heightmap, get cur() { return cur; },
   packing() { let v = 0, n = 0; for (const r of recs) if (!r.fallen) { v += r.w * r.d * r.h0; n++; } return { n, fillPct: stackH ? Math.round(100 * v / (PW * PD * stackH)) : 0 }; },
-  startGame, setAI, setSpeed: s => ai.speed = s,
+  hold, mode, showMenu, startGame, setAI, setSpeed: s => ai.speed = s,
   sim(sec) { for (let t = 0; t < sec; t += 1 / 60) update(1 / 60); },
   forceCur: o => { if (cur) Object.assign(cur, o); },
   dropAt(x, z) { ghost.x = x; ghost.z = z; refreshGhost(); return drop(); },
