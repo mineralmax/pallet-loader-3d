@@ -825,6 +825,7 @@ function statusTick() {
   se.className = 'sv2 ' + (maxS > 0.9 ? 'w' : maxS > 0.6 ? 'y' : 'g');
   const w = $('warn');
   if (tilt && Math.sin(Date.now() / 140) > 0) { w.textContent = '⚠  UNSTABLE LOAD  ⚠'; w.hidden = false; }
+  else if (ghost.warn && cur && !ai.on && !over) { w.textContent = '⚠  TOO HEAVY HERE — A BOX BELOW WOULD CRUSH  ⚠'; w.hidden = false; }
   else if (maxS > 0.9) { w.textContent = '⚠  OVERLOADED — BOXES CRUSHING  ⚠'; w.hidden = false; }
   else w.hidden = true;
 }
@@ -845,8 +846,27 @@ canvas.addEventListener('pointermove', e => {
 });
 canvas.addEventListener('pointerup', e => {
   setNdc(e);
-  if (pdown && !dragging && pdown.btn === 0) { manual(); drop(); }
+  if (pdown && !dragging && pdown.btn === 0 && !multi) { manual(); drop(); }
   pdown = null; dragging = false;
+});
+// touch: one finger aims and places; two fingers orbit, pinch zooms
+const touches = new Map(); let multi = false, pinch0 = 0;
+const pinchDist = () => { const [a, b] = [...touches.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+canvas.addEventListener('pointerdown', e => {
+  if (e.pointerType !== 'touch') return;
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (touches.size >= 2) { multi = true; pinch0 = pinchDist(); }
+});
+canvas.addEventListener('pointermove', e => {
+  const t = touches.get(e.pointerId); if (!t) return;
+  const dx = e.clientX - t.x, dy = e.clientY - t.y; t.x = e.clientX; t.y = e.clientY;
+  if (touches.size < 2) return;
+  cam.yaw -= dx * 0.004; cam.pitch = clamp(cam.pitch + dy * 0.003, 0.08, 1.35);
+  const d = pinchDist(); if (pinch0 > 0 && d > 0) cam.dist = clamp(cam.dist * pinch0 / d, 2.2, 10); pinch0 = d;
+});
+for (const ev of ['pointerup', 'pointercancel']) canvas.addEventListener(ev, e => {
+  if (!touches.delete(e.pointerId)) return;
+  if (!touches.size) setTimeout(() => multi = false, 0);
 });
 canvas.addEventListener('wheel', e => { cam.dist = clamp(cam.dist + e.deltaY * 0.004, 2.2, 10); e.preventDefault(); }, { passive: false });
 function setNdc(e) { const r = canvas.getBoundingClientRect(); ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); }
@@ -1084,7 +1104,25 @@ function refreshGhost() {
   const top = stackTop(ghost.x, ghost.z, efw, efd);
   ghost.y = top + fh / 2 + 0.03;
   ghost.fits = top + fh - PAL_TOP <= MAX_H + 1e-6;
+  ghost.warn = !ai.on && wouldOverload(ghost.x, ghost.z, efw, efd, top, cur.kg);
   ghost.top = top;
+}
+// Would setting this box down here push any crushable box below past its MAX LOAD?
+function wouldOverload(x, z, efw, efd, top, kg) {
+  const extra = new Map(); let sum = 0; const sup = [];
+  for (const n of nodes) {
+    const b = n.bb; if (Math.abs(b.maxY - top) > 0.03) continue;
+    const ox = Math.min(b.maxX, x + efw / 2) - Math.max(b.minX, x - efw / 2), oz = Math.min(b.maxZ, z + efd / 2) - Math.max(b.minZ, z - efd / 2);
+    if (ox < 0.01 || oz < 0.01) continue;
+    sup.push([n, ox * oz]); sum += ox * oz;
+  }
+  for (const [n, a] of sup) extra.set(n, kg * a / sum);
+  for (const n of nodes) {                                           // nodes are top-most first
+    const e = extra.get(n); if (!e) continue;
+    if (!n.rec.spec.rigid && n.load + e > n.rec.spec.strength) return true;
+    for (const q of n.sup) extra.set(q.n, (extra.get(q.n) || 0) + e * q.f);
+  }
+  return false;
 }
 // magnetic snapping: pull the box flush against pallet edges and neighbouring cartons (hold Shift to turn off)
 function snapGhost() {
@@ -1116,8 +1154,8 @@ function updateGhost() {
     if (!held.has('shift') && Math.abs(Math.sin(2 * curOri.yaw)) < 0.01) snapGhost();
   } else refreshGhost();
   const ok = ghost.fits;
-  ghostMat.color.set(ok ? 0xf0b42a : 0xd44c3a); ghostMat.emissive.set(ok ? 0xf0b42a : 0xd44c3a);
-  footMat.color.set(ok ? 0xf0b42a : 0xd44c3a);
+  const gc = !ok ? 0xd44c3a : ghost.warn ? 0xff7a1a : 0xf0b42a;                // red: too tall · orange: would crush something
+  ghostMat.color.set(gc); ghostMat.emissive.set(gc); footMat.color.set(gc);
   ghostMesh.visible = footMesh.visible = true;
   ghostMat.opacity = canDropT > 0 ? 0.2 : 0.55;
   ghostMesh.position.set(ghost.x, ghost.y, ghost.z); ghostMesh.scale.set(ghost.fw, ghost.fh, ghost.fd); ghostMesh.rotation.y = curOri.yaw;
@@ -1193,7 +1231,7 @@ window.__pl = {
   planCur() { if (!cur) return null; const p = planPlacement(cur); if (!p) return null; const d = dimsFor(cur, p.vert, p.sw); return { ...p, ...d, dims: cur.dims }; },
   heightmap, get cur() { return cur; },
   packing() { let v = 0, n = 0; for (const r of recs) if (!r.fallen) { v += r.w * r.d * r.h0; n++; } return { n, fillPct: stackH ? Math.round(100 * v / (PW * PD * stackH)) : 0 }; },
-  hold, mode, showMenu, startGame, setAI, setSpeed: s => ai.speed = s,
+  ghost, wouldOverload, hold, mode, showMenu, startGame, setAI, setSpeed: s => ai.speed = s,
   sim(sec) { for (let t = 0; t < sec; t += 1 / 60) update(1 / 60); },
   forceCur: o => { if (cur) Object.assign(cur, o); },
   dropAt(x, z) { ghost.x = x; ghost.z = z; refreshGhost(); return drop(); },

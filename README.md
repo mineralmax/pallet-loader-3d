@@ -6,6 +6,8 @@ A 3D box-stacking game: cartons arrive as full pallet layers, and you fit them t
 - **Modes:** start menu with length (Quick 40 / Standard 100 / Marathon 200 cartons) and box toughness (Tough / Normal / Delicate).
 - **Score:** points per box, packing bonus per pallet, growing bonus for perfect layers in a row; best score saved per mode.
 - **Hold:** `H` sets the box in hand aside for later. **Sound:** `M` mutes.
+- **Overload warning:** the ghost turns orange when setting a box down there would crush a box below.
+- **Touch:** one finger aims and places; two fingers orbit, pinch zooms.
 - **Units:** weights in lb, sizes in inches, on a standard 48 × 40 in pallet. Cartons are multiples of 4 in (16–32 in).
 - **Snapping:** boxes snap flush to edges and neighbours; hold `Shift` to place freely.
 - **Layers:** each layer is a pallet-sized slab cut into cartons of one height, shuffled. Press `G` to show where the box in hand belongs.
